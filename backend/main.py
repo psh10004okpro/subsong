@@ -7,16 +7,19 @@ import json
 import os
 import re
 import shutil
+import threading
+import time
 import uuid
 from datetime import datetime
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import align as align_mod
 from . import images as images_mod
+from . import jobs as jobs_mod
 from . import render as render_mod
 from .srt import scenes_to_srt
 
@@ -61,6 +64,12 @@ class CandidatesReq(BaseModel):
     ref_image_id: str = ""
 
 
+class ThumbReq(BaseModel):
+    title: str
+    subtitle: str = ""
+    image_id: str = ""
+
+
 class SectionBg(BaseModel):
     start: float
     end: float
@@ -71,6 +80,7 @@ class RenderReq(BaseModel):
     audio_id: str
     scenes: list[Scene]
     aspect: str = "16:9"
+    aspects: list[str] = []  # 여러 비율 동시 렌더 (예: ["16:9","9:16"])
     bg_id: str | None = None
     bg_color: str = "black"
     font: str = os.environ.get("SUBSONG_FONT", "Malgun Gothic")
@@ -141,6 +151,16 @@ def api_candidates(req: CandidatesReq):
     return {"candidates": cands}
 
 
+@app.post("/api/thumbnail")
+def api_thumbnail(req: ThumbReq):
+    """대표 이미지 + 제목으로 1280×720 유튜브 썸네일 생성."""
+    try:
+        tid = images_mod.make_thumbnail(DATA, req.title, req.subtitle, req.image_id or None)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"썸네일 생성 실패: {e}")
+    return {"image_id": tid, "image_url": f"/data/{tid}"}
+
+
 @app.post("/api/srt")
 def api_srt(req: SrtReq):
     srt = scenes_to_srt([s.model_dump() for s in req.scenes])
@@ -160,22 +180,77 @@ def api_render(req: RenderReq):
          "image_path": os.path.join(DATA, sb.image_id)}
         for sb in req.sections if sb.image_id
     ] or None
-    try:
-        out = render_mod.render(
-            audio_path,
-            [s.model_dump() for s in req.scenes],
-            DATA,
-            sections=sections,
-            background_path=bg_path,
-            aspect=req.aspect,
-            bg_color=req.bg_color,
-            font=req.font,
-            font_size=req.font_size,
-            subtitle_style=req.subtitle_style,
-        )
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, f"영상 합성 실패: {e}")
-    return {"video_url": f"/data/{os.path.basename(out)}"}
+    scenes_render = [s.model_dump() for s in req.scenes]
+    aspects = list(dict.fromkeys(req.aspects or [req.aspect]))  # 중복 제거(순서 보존)
+    job = jobs_mod.create("render")
+
+    def run():
+        try:
+            videos = []
+            n = len(aspects)
+            for i, asp in enumerate(aspects):
+                if job.cancelled:
+                    break
+                out = render_mod.render(
+                    audio_path, scenes_render, DATA,
+                    sections=sections, background_path=bg_path,
+                    aspect=asp, bg_color=req.bg_color,
+                    font=req.font, font_size=req.font_size,
+                    subtitle_style=req.subtitle_style, job=job,
+                    progress_range=(i / n, (i + 1) / n),
+                )
+                if job.cancelled or out is None:
+                    break
+                videos.append({"aspect": asp, "video_url": f"/data/{os.path.basename(out)}"})
+            if job.cancelled:
+                job.status, job.message = "cancelled", "취소됨"
+            else:
+                job.progress = 1.0
+                job.result = {"videos": videos,
+                              "video_url": videos[0]["video_url"] if videos else None}
+                job.status = "done"
+        except Exception as e:  # noqa: BLE001
+            job.status, job.error = "error", str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job.id}
+
+
+@app.get("/api/jobs/{jid}")
+def api_job_get(jid: str):
+    j = jobs_mod.get(jid)
+    if not j:
+        raise HTTPException(404, "작업을 찾을 수 없습니다.")
+    return jobs_mod.snapshot(j)
+
+
+@app.post("/api/jobs/{jid}/cancel")
+def api_job_cancel(jid: str):
+    if not jobs_mod.cancel(jid):
+        raise HTTPException(404, "작업을 찾을 수 없습니다.")
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}/events")
+def api_job_events(jid: str):
+    if not jobs_mod.get(jid):
+        raise HTTPException(404, "작업을 찾을 수 없습니다.")
+
+    def gen():
+        last = None
+        while True:
+            j = jobs_mod.get(jid)
+            if j is None:
+                break
+            data = json.dumps(jobs_mod.snapshot(j), ensure_ascii=False)
+            if data != last:
+                yield f"data: {data}\n\n"
+                last = data
+            if j.status in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.4)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 # ----- 프로젝트 저장/불러오기 (작업 내용 기억) -----

@@ -814,6 +814,84 @@ input[type="color"] {
   resize: vertical;
 }
 
+.render-progress {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.render-progress .bar {
+  height: 9px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.render-progress .bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width .3s ease;
+}
+
+.render-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.also-shorts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.also-shorts input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.img-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+
+.yt-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.thumb-preview {
+  width: 100%;
+  display: block;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+
+#thumbResult {
+  margin: 8px 0;
+  display: grid;
+  gap: 4px;
+}
+
+.result-item {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
 .style-preview {
   margin-top: 8px;
   min-height: 58px;

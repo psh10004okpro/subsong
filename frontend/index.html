@@ -133,7 +133,10 @@
       <div class="field">
         <div class="label-row">
           <label for="imgStyle">배경 이미지 · 구간별 <small>(선택)</small></label>
-          <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
+          <span class="img-actions">
+            <button type="button" id="genAllBtn" class="link-btn hidden">전체 생성</button>
+            <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
+          </span>
         </div>
         <input type="text" id="imgStyle" placeholder="전체 분위기 (예: 쓸쓸한 밤, 영화같은, 푸른 톤)" />
 
@@ -169,6 +172,10 @@
             <span>1:1</span>
           </label>
         </div>
+        <label class="also-shorts">
+          <input type="checkbox" id="alsoShorts" />
+          <span>+ 9:16 Shorts도 같이 만들기</span>
+        </label>
       </div>
 
       <div class="settings-grid">
@@ -204,13 +211,43 @@
         <button type="button" id="renderBtn" class="primary" disabled>MP4 만들기</button>
       </div>
 
+      <div id="renderProgress" class="render-progress hidden">
+        <div class="bar"><div id="renderBar" class="bar-fill"></div></div>
+        <div class="render-progress-row">
+          <span id="renderPct">0%</span>
+          <button type="button" id="cancelRenderBtn" class="mini-btn">취소</button>
+        </div>
+      </div>
+
       <div id="ytExport" class="yt-export hidden">
+        <div class="field">
+          <label for="songTitle">영상 제목 <small>(썸네일·메타데이터용)</small></label>
+          <input type="text" id="songTitle" placeholder="예: 아직도 너를 불러 본다" />
+        </div>
+        <div class="yt-actions">
+          <button type="button" id="thumbBtn" class="ghost">썸네일 생성</button>
+          <button type="button" id="metaBtn" class="ghost">메타데이터 생성</button>
+        </div>
+
+        <div id="thumbResult" class="hidden">
+          <img id="thumbPreview" class="thumb-preview" alt="썸네일 미리보기" />
+          <a id="thumbDownload" class="download-link" download="thumbnail.png">썸네일 다운로드</a>
+        </div>
+
         <div class="label-row">
-          <span class="field-label">YouTube 설명란 챕터</span>
+          <span class="field-label">설명란 챕터</span>
           <button type="button" id="copyChaptersBtn" class="link-btn">복사</button>
         </div>
-        <textarea id="chaptersBox" rows="5" readonly></textarea>
-        <span class="muted">설명란에 붙여넣으면 자동 챕터가 됩니다 (첫 줄 0:00 · 3개 이상 · 각 10초 이상).</span>
+        <textarea id="chaptersBox" rows="4" readonly></textarea>
+
+        <div id="metaWrap" class="hidden">
+          <div class="label-row">
+            <span class="field-label">제목 · 설명 · 태그</span>
+            <button type="button" id="copyMetaBtn" class="link-btn">복사</button>
+          </div>
+          <textarea id="metaBox" rows="9" readonly></textarea>
+        </div>
+        <span class="muted">챕터·설명을 유튜브 업로드 시 붙여넣으세요. AI 음악 크레딧이 자동 포함됩니다.</span>
       </div>
 
       <div id="result" class="result hidden">

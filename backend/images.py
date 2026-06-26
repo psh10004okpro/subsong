@@ -8,9 +8,12 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+from PIL import Image, ImageDraw
+
 from . import face as face_mod
 from . import sections as sections_mod
 from .providers import get_image_provider
+from .providers.placeholder_provider import _font, _wrap
 
 
 def group_only(scenes, style=""):
@@ -40,3 +43,54 @@ def generate_candidates(prompt, out_dir, count=4, aspect="16:9", label="",
 
     with ThreadPoolExecutor(max_workers=min(count, 4)) as ex:
         return list(ex.map(one, range(count)))
+
+
+def _cover(src, w, h):
+    """이미지를 w×h를 꽉 채우도록 스케일 후 중앙 크롭."""
+    sr, tr = src.width / src.height, w / h
+    if sr > tr:
+        nw, nh = int(h * sr), h
+    else:
+        nw, nh = w, int(w / sr)
+    src = src.resize((max(nw, w), max(nh, h)))
+    left, top = (src.width - w) // 2, (src.height - h) // 2
+    return src.crop((left, top, left + w, top + h))
+
+
+def make_thumbnail(out_dir, title, subtitle="", bg_image_id=None):
+    """1280×720 유튜브 썸네일: 배경 이미지(구간 이미지) + 제목 오버레이."""
+    W, H = 1280, 720
+    base = None
+    if bg_image_id:
+        p = os.path.join(out_dir, bg_image_id)
+        if os.path.exists(p):
+            base = _cover(Image.open(p).convert("RGB"), W, H)
+    if base is None:
+        base = Image.new("RGB", (W, H), (24, 26, 34))
+
+    draw = ImageDraw.Draw(base, "RGBA")
+    for y in range(H):  # 하단 어둡게(가독성)
+        if y > H * 0.42:
+            a = int(210 * (y - H * 0.42) / (H * 0.58))
+            draw.line([(0, y), (W, y)], fill=(0, 0, 0, min(200, a)))
+
+    margin = 60
+    f_title = _font(int(W * 0.078), bold=True)
+    f_sub = _font(int(W * 0.030))
+    lines = _wrap(draw, (title or "").strip() or "제목", f_title, W - margin * 2)[:3]
+    lh = int(W * 0.092)
+    sub = (subtitle or "").strip()
+    block_h = len(lines) * lh + (int(W * 0.05) if sub else 0)
+    y = H - margin - block_h
+
+    if sub:
+        draw.text((margin, y), sub, font=f_sub, fill=(255, 224, 138, 255))
+        y += int(W * 0.05)
+    for ln in lines:
+        draw.text((margin, y), ln, font=f_title, fill=(255, 255, 255, 255),
+                  stroke_width=3, stroke_fill=(0, 0, 0, 255))
+        y += lh
+
+    out_id = uuid.uuid4().hex + ".png"
+    base.convert("RGB").save(os.path.join(out_dir, out_id))
+    return out_id

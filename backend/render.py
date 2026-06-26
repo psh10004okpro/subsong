@@ -95,6 +95,8 @@ def render(
     font: str = "Malgun Gothic",
     font_size: int = 48,
     subtitle_style: str = "ballad",
+    job=None,
+    progress_range=(0.0, 1.0),
 ) -> str:
     w, h = ASPECTS.get(aspect, (1920, 1080))
     os.makedirs(out_dir, exist_ok=True)
@@ -120,15 +122,52 @@ def render(
         "-pix_fmt", "yuv420p", "-r", "30",
         "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
         "-shortest", "-movflags", "+faststart",
+        "-progress", "pipe:1", "-nostats", "-loglevel", "error",
         out_name,
     ]
 
-    proc = subprocess.run(cmd, cwd=out_dir, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+    total = _probe_duration(audio_path)
+    proc = subprocess.Popen(cmd, cwd=out_dir, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace")
+    if job is not None:
+        job.proc = proc
+
+    lo, hi = progress_range
+    for line in proc.stdout:
+        line = line.strip()
+        if line.startswith("out_time_us=") and total > 0:
+            try:
+                us = int(line.split("=", 1)[1])
+                if job is not None:
+                    frac = min(1.0, max(0.0, us / 1_000_000 / total))
+                    job.progress = min(0.999, lo + frac * (hi - lo))
+            except ValueError:
+                pass
+        elif line.startswith("progress=") and line.endswith("end"):
+            if job is not None:
+                job.progress = hi
+        if job is not None and job.cancelled:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            break
+
+    proc.wait()
+    err = proc.stderr.read() if proc.stderr else ""
     try:
         os.remove(ass_path)
     except OSError:
         pass
+
+    out_path = os.path.join(out_dir, out_name)
+    if job is not None and job.cancelled:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        return None
     if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or "")[-2000:])
-    return os.path.join(out_dir, out_name)
+        raise RuntimeError((err or "")[-2000:])
+    return out_path

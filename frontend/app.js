@@ -369,13 +369,114 @@ $("srtBtn").addEventListener("click", async () => {
   status("SRT 저장 완료", "ok");
 });
 
+let renderJobId = null;
+let renderES = null;
+
+function showRenderProgress(frac) {
+  $("renderProgress").classList.remove("hidden");
+  const pct = Math.round((frac || 0) * 100);
+  $("renderBar").style.width = pct + "%";
+  $("renderPct").textContent = pct + "%";
+}
+function hideRenderProgress() {
+  $("renderProgress").classList.add("hidden");
+  $("renderBar").style.width = "0%";
+}
+function endRender() {
+  if (renderES) {
+    renderES.close();
+    renderES = null;
+  }
+  renderJobId = null;
+  $("renderBtn").disabled = false;
+  updateActionState();
+}
+
+function renderResults(videos) {
+  const box = $("result");
+  box.innerHTML = "";
+  if (!videos.length) {
+    box.classList.add("hidden");
+    return;
+  }
+  videos.forEach((v) => {
+    const item = document.createElement("div");
+    item.className = "result-item";
+    if (v.aspect) {
+      const tag = document.createElement("div");
+      tag.className = "muted";
+      tag.textContent = v.aspect;
+      item.appendChild(tag);
+    }
+    const vid = document.createElement("video");
+    vid.controls = true;
+    vid.src = v.video_url;
+    const a = document.createElement("a");
+    a.className = "download-link";
+    a.href = v.video_url;
+    a.download = "music_video" + (v.aspect ? "_" + v.aspect.replace(":", "x") : "") + ".mp4";
+    a.textContent = "영상 다운로드";
+    item.append(vid, a);
+    box.appendChild(item);
+  });
+  box.classList.remove("hidden");
+}
+
+function listenRenderJob(jid) {
+  if (renderES) renderES.close();
+  renderES = new EventSource(`/api/jobs/${jid}/events`);
+  renderES.onmessage = (ev) => {
+    let j;
+    try {
+      j = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
+    showRenderProgress(j.progress || 0);
+    if (j.status === "done") {
+      const r = j.result || {};
+      const vids = r.videos && r.videos.length
+        ? r.videos
+        : (r.video_url ? [{ aspect: "", video_url: r.video_url }] : []);
+      renderResults(vids);
+      hideRenderProgress();
+      endRender();
+      setWorkflow(3);
+      status(`영상 생성 완료 (${vids.length}개). 아래에서 확인하세요.`, "ok");
+    } else if (j.status === "error") {
+      hideRenderProgress();
+      endRender();
+      status("영상 생성 실패: " + (j.error || ""), "err");
+    } else if (j.status === "cancelled") {
+      hideRenderProgress();
+      endRender();
+      status("렌더를 취소했습니다.", "ok");
+    } else {
+      busy(`영상 합성 중… ${Math.round((j.progress || 0) * 100)}%`);
+    }
+  };
+  renderES.onerror = () => {
+    /* 연결 끊김은 무시(작업은 서버에서 계속 진행) */
+  };
+}
+
+$("cancelRenderBtn").addEventListener("click", async () => {
+  if (!renderJobId) return;
+  try {
+    await fetch(`/api/jobs/${renderJobId}/cancel`, { method: "POST" });
+    status("취소 요청을 보냈습니다…", "ok");
+  } catch (e) {
+    status("취소 실패: " + e.message, "err");
+  }
+});
+
 $("renderBtn").addEventListener("click", async () => {
   if (!audioId || !scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
   if (hasTimingIssues()) return status("시작/끝 시간이 맞지 않는 줄을 먼저 고치세요.", "err");
 
-  const button = $("renderBtn");
-  button.disabled = true;
-  busy("영상 합성 중입니다. 노래 길이에 따라 시간이 걸립니다.");
+  $("renderBtn").disabled = true;
+  showRenderProgress(0);
+  busy("영상 합성 준비 중…");
 
   // 자막 off 구간의 줄은 자막에서 제외
   const offIds = new Set();
@@ -383,6 +484,8 @@ $("renderBtn").addEventListener("click", async () => {
     if (s.subtitle === false) (s.scene_ids || []).forEach((id) => offIds.add(id));
   });
   const subScenes = scenes.filter((s) => !offIds.has(s.id));
+  const primary = getAspect();
+  const aspects = $("alsoShorts").checked ? [...new Set([primary, "9:16"])] : [primary];
 
   try {
     const res = await fetch("/api/render", {
@@ -391,7 +494,8 @@ $("renderBtn").addEventListener("click", async () => {
       body: JSON.stringify({
         audio_id: audioId,
         scenes: subScenes,
-        aspect: getAspect(),
+        aspect: primary,
+        aspects,
         bg_id: bgId,
         bg_color: $("bgColor").value,
         font_size: Number($("fontSize").value) || 48,
@@ -403,16 +507,12 @@ $("renderBtn").addEventListener("click", async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-
-    $("resultVideo").src = data.video_url;
-    $("downloadLink").href = data.video_url;
-    $("result").classList.remove("hidden");
-    setWorkflow(3);
-    status("영상 생성 완료. 아래에서 확인할 수 있습니다.", "ok");
+    renderJobId = data.job_id;
+    listenRenderJob(renderJobId);
   } catch (e) {
     status("영상 생성 실패: " + e.message, "err");
-  } finally {
-    updateActionState();
+    hideRenderProgress();
+    endRender();
   }
 });
 
@@ -612,6 +712,50 @@ $("clearAnchorBtn").addEventListener("click", () => {
 
 $("genImagesBtn").addEventListener("click", groupSections);
 
+async function genAllCandidates() {
+  if (!sectionsState.length) return status("먼저 구간을 나누세요.", "err");
+  const btn = $("genAllBtn");
+  btn.disabled = true;
+  $("genImagesBtn").disabled = true;
+  try {
+    for (let i = 0; i < sectionsState.length; i++) {
+      const s = sectionsState[i];
+      busy(`전체 배경 생성 중… ${i + 1}/${sectionsState.length} · ${s.label}`);
+      try {
+        const res = await fetch("/api/candidates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: s.image_prompt,
+            aspect: getAspect(),
+            count: CANDIDATE_COUNT,
+            label: s.label,
+            ref_image_id: useRef && anchor ? anchor.image_id : "",
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && (data.candidates || []).length) {
+          s.candidates = data.candidates;
+          const c0 = s.candidates[0];
+          s.image_id = c0.image_id;
+          s.image_url = c0.image_url;
+          s.has_face = !!c0.has_face;
+          if (!anchor) setAnchor(s);
+        }
+      } catch (e) {
+        /* 개별 구간 실패는 건너뜀 */
+      }
+    }
+    renderSectionCards();
+    renderAnchor();
+    status("전체 구간 배경 생성 완료. 마음에 안 드는 구간만 다시 고르세요.", "ok");
+  } finally {
+    btn.disabled = false;
+    $("genImagesBtn").disabled = false;
+  }
+}
+$("genAllBtn").addEventListener("click", genAllCandidates);
+
 $("sections").addEventListener("change", (e) => {
   const card = e.target.closest(".section-card");
   if (!card) return;
@@ -662,6 +806,7 @@ function collectState() {
     aspect: getAspect(),
     font_size: Number($("fontSize").value) || 48,
     subtitle_style: $("subtitleStyle").value,
+    song_title: $("songTitle").value,
     bg_color: $("bgColor").value,
     bg_id: bgId,
     anchor,
@@ -681,6 +826,7 @@ function applyState(st) {
   $("imgStyle").value = st.style || "";
   $("fontSize").value = st.font_size || 48;
   $("subtitleStyle").value = st.subtitle_style || "ballad";
+  $("songTitle").value = st.song_title || "";
   $("bgColor").value = st.bg_color || "#101114";
   updateStylePreview();
   const asp = document.querySelector(`input[name="aspect"][value="${st.aspect || "16:9"}"]`);
@@ -773,6 +919,8 @@ function buildChapters() {
 function renderChapters() {
   const box = $("ytExport");
   if (!box) return;
+  const ga = $("genAllBtn");
+  if (ga) ga.classList.toggle("hidden", !sectionsState.length);
   if (sectionsState.length) {
     box.classList.remove("hidden");
     $("chaptersBox").value = buildChapters();
@@ -792,6 +940,61 @@ $("copyChaptersBtn").addEventListener("click", async () => {
     document.execCommand("copy");
   }
   status("챕터를 복사했습니다. 유튜브 설명란에 붙여넣으세요.", "ok");
+});
+
+// ---- 자동 썸네일 ----
+$("thumbBtn").addEventListener("click", async () => {
+  const title = $("songTitle").value.trim();
+  if (!title) return status("영상 제목을 입력하세요.", "err");
+  const bg = (sectionsState.find((s) => s.image_id) || {}).image_id || "";
+  busy("썸네일 생성 중…");
+  try {
+    const res = await fetch("/api/thumbnail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, subtitle: "AI Lyric Video", image_id: bg }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    $("thumbPreview").src = data.image_url + "?t=" + Date.now();
+    $("thumbDownload").href = data.image_url;
+    $("thumbResult").classList.remove("hidden");
+    status("썸네일 생성 완료.", "ok");
+  } catch (e) {
+    status("썸네일 실패: " + e.message, "err");
+  }
+});
+
+// ---- 업로드 메타데이터 ----
+function buildMetadata() {
+  const title = $("songTitle").value.trim() || "제목 없는 노래";
+  const chapters = buildChapters();
+  const hook = (lyricLines()[0] || "").slice(0, 40);
+  const hashtags = "#가사 #lyrics #AI음악 #뮤직비디오";
+  const desc =
+    (hook ? `"${hook}…"\n\n` : "") +
+    (chapters ? `🎬 챕터\n${chapters}\n\n` : "") +
+    "🎵 이 곡의 음악·가사는 AI로 제작되었습니다.\n" +
+    "※ 사용한 AI 음악 플랫폼의 라이선스(상업/수익화)를 확인하세요.\n\n" +
+    hashtags;
+  const tags = [title, "가사", "lyric video", "AI music", "뮤직비디오", "lyrics"].join(", ");
+  return `[제목]\n${title} (가사 영상)\n\n[설명]\n${desc}\n\n[태그]\n${tags}`;
+}
+$("metaBtn").addEventListener("click", () => {
+  $("metaBox").value = buildMetadata();
+  $("metaWrap").classList.remove("hidden");
+  status("메타데이터 생성 완료. 복사해 업로드 시 붙여넣으세요.", "ok");
+});
+$("copyMetaBtn").addEventListener("click", async () => {
+  const t = $("metaBox").value;
+  if (!t) return;
+  try {
+    await navigator.clipboard.writeText(t);
+  } catch (e) {
+    $("metaBox").select();
+    document.execCommand("copy");
+  }
+  status("메타데이터를 복사했습니다.", "ok");
 });
 
 // ---- 자막 스타일 미리보기 ----
