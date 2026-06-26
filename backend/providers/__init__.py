@@ -23,8 +23,9 @@ VIDEO_PROVIDERS = {
     # "myapi": MyApiVideoProvider,   # ← 2차에서 여기에 추가
 }
 
-# 현재 기본 이미지 생성기 (환경변수로 교체 가능: SUBSONG_IMAGE_PROVIDER=sdxl 등)
-DEFAULT_IMAGE_PROVIDER = os.environ.get("SUBSONG_IMAGE_PROVIDER", "placeholder")
+# 기본 이미지 생성기. 마브는 키 없이도 동작(서버 인증 비활성).
+# 서버가 닫혀 있으면 SUBSONG_IMAGE_PROVIDER=placeholder 로 오프라인 폴백.
+DEFAULT_IMAGE_PROVIDER = os.environ.get("SUBSONG_IMAGE_PROVIDER", "marv")
 
 
 def get_image_provider(name: str | None = None) -> ImageProvider:

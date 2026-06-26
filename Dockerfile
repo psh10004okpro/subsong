@@ -28,7 +28,7 @@ ENV SUBSONG_DATA_DIR=/data \
     SUBSONG_MODEL_DIR=/data/models \
     SUBSONG_FONT=NanumGothic \
     SUBSONG_MODEL=large-v3 \
-    SUBSONG_IMAGE_PROVIDER=placeholder
+    SUBSONG_IMAGE_PROVIDER=marv
 VOLUME ["/data"]
 EXPOSE 8000
 

@@ -31,10 +31,7 @@ class MarvImageProvider(ImageProvider):
         return {"x-api-key": self.key} if self.key else {}
 
     def generate(self, prompt: str, out_path: str, aspect: str = "16:9", **kw) -> str:
-        if not self.key:
-            raise RuntimeError(
-                "마브 API 키가 없습니다. SUBSONG_MARV_API_KEY 환경변수를 설정하세요."
-            )
+        # 키는 선택적: 마브 서버 인증이 비활성이면 없이도 동작. 있으면 x-api-key로 전송.
         seed = int(kw.get("seed") or 42)
         params = {"aspect": aspect, "seed": seed}
         data = {
