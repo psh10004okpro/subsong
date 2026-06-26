@@ -1,0 +1,7 @@
+# torch 는 CUDA 빌드로 따로 설치 (RTX 4070 Ti):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch
+stable-ts
+fastapi
+uvicorn[standard]
+python-multipart

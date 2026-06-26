@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>subsong · 가사 싱크 / 뮤직비디오 생성기</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">S</span>
+      <div>
+        <h1>subsong</h1>
+        <p>음원과 가사를 맞추고, 자막이 들어간 MP4까지 만드는 로컬 작업대</p>
+      </div>
+    </div>
+    <ol class="workflow" aria-label="작업 단계">
+      <li data-step="1" class="active"><span>1</span>소스</li>
+      <li data-step="2"><span>2</span>싱크</li>
+      <li data-step="3"><span>3</span>출력</li>
+    </ol>
+  </header>
+
+  <main class="studio">
+    <section class="panel input-panel" id="inputCard">
+      <div class="section-title">
+        <span class="kicker">Step 1</span>
+        <h2>소스 준비</h2>
+        <p>음원 파일과 줄 단위 가사를 넣으면 각 줄의 시작/끝 시간을 자동으로 맞춥니다.</p>
+      </div>
+
+      <div class="project-bar">
+        <select id="projectSelect" aria-label="저장된 프로젝트">
+          <option value="">저장된 프로젝트…</option>
+        </select>
+        <button type="button" id="loadProjectBtn" class="mini-btn">불러오기</button>
+        <button type="button" id="saveProjectBtn" class="mini-btn">현재 저장</button>
+      </div>
+
+      <div class="field">
+        <label for="audioFile">음원 파일</label>
+        <label class="file-pick" for="audioFile">
+          <input type="file" id="audioFile" accept="audio/*" />
+          <span id="audioName">MP3, WAV 등 오디오 파일 선택</span>
+          <small>선택하면 오른쪽 플레이어에서 미리 들을 수 있습니다.</small>
+        </label>
+      </div>
+
+      <div class="field">
+        <div class="label-row">
+          <label for="lyrics">가사</label>
+          <button type="button" id="sampleBtn" class="link-btn">예시 채우기</button>
+        </div>
+        <textarea id="lyrics" rows="12" placeholder="어두운 밤하늘 아래&#10;너의 이름을 불러본다&#10;바람이 스쳐 지나가도"></textarea>
+        <div class="field-footer">
+          <span id="lyricStats">0줄 · 0자</span>
+          <span>빈 줄은 제외하고 정렬합니다.</span>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label class="select-field" for="language">
+          <span>언어</span>
+          <select id="language">
+            <option value="ko" selected>한국어</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+          </select>
+        </label>
+        <button type="button" id="alignBtn" class="primary">자동 정렬 시작</button>
+      </div>
+
+      <aside class="notice">
+        <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
+        <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠르게 시작됩니다.</span>
+      </aside>
+    </section>
+
+    <section class="panel editor-panel" id="editorCard">
+      <div class="section-title compact">
+        <span class="kicker">Step 2</span>
+        <h2>싱크 검토</h2>
+        <p>재생하면서 어긋난 줄의 시작과 끝 시간을 바로 고칩니다.</p>
+      </div>
+
+      <div class="player-bar">
+        <audio id="audio" controls></audio>
+        <div class="player-meta">
+          <span id="playhead">0:00.0</span>
+          <small id="audioMeta">음원을 선택하면 재생할 수 있습니다.</small>
+        </div>
+      </div>
+
+      <div id="editorEmpty" class="empty-state">
+        <strong>아직 정렬된 가사가 없습니다.</strong>
+        <span>왼쪽에서 음원과 가사를 넣고 자동 정렬을 시작하면 줄 단위 편집기가 열립니다.</span>
+      </div>
+
+      <div id="editorTools" class="editor-tools hidden">
+        <div class="toolbar">
+          <span id="lineSummary">0줄</span>
+          <button type="button" id="addRow" class="ghost">줄 추가</button>
+        </div>
+        <div class="sync-table">
+          <div class="listhead" aria-hidden="true">
+            <span>#</span>
+            <span>시작</span>
+            <span>끝</span>
+            <span>가사</span>
+            <span>동작</span>
+          </div>
+          <div id="lines"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel output-panel" id="outputCard">
+      <div class="section-title compact">
+        <span class="kicker">Step 3</span>
+        <h2>출력 설정</h2>
+        <p>SRT를 먼저 확인하거나, 배경과 화면 비율을 정해 MP4를 만듭니다.</p>
+      </div>
+
+      <div class="field">
+        <div class="label-row">
+          <label for="imgStyle">배경 이미지 · 구간별 <small>(선택)</small></label>
+          <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
+        </div>
+        <input type="text" id="imgStyle" placeholder="전체 분위기 (예: 쓸쓸한 밤, 영화같은, 푸른 톤)" />
+        <div id="sections" class="sections"></div>
+        <span class="muted">구간을 나눈 뒤 구간별로 후보 4장을 생성해 1장씩 고릅니다. 고른 이미지가 배경으로 쓰입니다.</span>
+      </div>
+
+      <div class="field">
+        <span class="field-label">화면 비율</span>
+        <div class="segmented" role="radiogroup" aria-label="화면 비율">
+          <label>
+            <input type="radio" name="aspect" value="16:9" checked />
+            <span>16:9</span>
+          </label>
+          <label>
+            <input type="radio" name="aspect" value="9:16" />
+            <span>9:16</span>
+          </label>
+          <label>
+            <input type="radio" name="aspect" value="1:1" />
+            <span>1:1</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <label class="field" for="fontSize">
+          <span class="field-label">자막 크기</span>
+          <input type="number" id="fontSize" value="28" min="12" max="96" />
+        </label>
+        <label class="field color-field" for="bgColor">
+          <span class="field-label">배경색</span>
+          <input type="color" id="bgColor" value="#101114" />
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="bgFile">배경 이미지/영상</label>
+        <input type="file" id="bgFile" accept="image/*,video/*" />
+        <span id="bgName" class="muted">선택하지 않으면 배경색으로 렌더링합니다.</span>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="srtBtn" class="ghost" disabled>SRT 내보내기</button>
+        <button type="button" id="renderBtn" class="primary" disabled>MP4 만들기</button>
+      </div>
+
+      <div id="result" class="result hidden">
+        <video id="resultVideo" controls></video>
+        <a id="downloadLink" href="#" download="music_video.mp4" class="download-link">영상 다운로드</a>
+      </div>
+    </section>
+  </main>
+
+  <div id="status" class="status hidden" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
