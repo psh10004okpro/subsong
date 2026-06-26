@@ -1,18 +1,16 @@
 """장면 목록 + 음악 + 배경 → ffmpeg로 유튜브용 MP4 합성.
 
-배경은 두 가지 방식:
-  - sections(구간별 이미지)가 있으면 → 구간마다 이미지를 시간순으로 이어 붙인
-    배경 위에 자막을 얹는다. (2차: AI 이미지 배경)
-  - 없으면 → 이미지 한 장 / 영상 클립 / 단색 중 하나를 전체 배경으로. (1차)
+자막은 ASS로 굽는다(단어 노래방 하이라이트 + 스타일 프리셋, backend/ass.py).
+배경: 구간별 이미지(sections) 이어붙임 / 단일 이미지·영상·단색.
 
-Windows 경로 주의: subtitles 필터는 절대경로의 콜론을 싫어하므로 SRT를
+Windows 경로 주의: ass/subtitles 필터는 절대경로 콜론을 싫어하므로 자막 파일을
 출력 폴더에 쓰고 cwd를 그 폴더로 둔 뒤 파일명만 넘긴다.
 """
 import os
 import subprocess
 import uuid
 
-from .srt import scenes_to_srt
+from . import ass as ass_mod
 
 ASPECTS = {
     "16:9": (1920, 1080),
@@ -21,14 +19,6 @@ ASPECTS = {
 }
 
 _VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
-
-
-def _style(font, font_size):
-    return (
-        f"FontName={font},FontSize={font_size},"
-        "PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,"
-        "BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=60"
-    )
 
 
 def _fit(w, h):
@@ -50,7 +40,7 @@ def _probe_duration(path):
         return 0.0
 
 
-def _cmd_single(audio_path, background_path, srt_name, w, h, style, bg_color, out_name):
+def _cmd_single(audio_path, background_path, ass_name, w, h, bg_color):
     cmd = ["ffmpeg", "-y"]
     if background_path and os.path.exists(background_path):
         ext = os.path.splitext(background_path)[1].lower()
@@ -60,17 +50,17 @@ def _cmd_single(audio_path, background_path, srt_name, w, h, style, bg_color, ou
             cmd += ["-loop", "1", "-i", background_path]
     else:
         cmd += ["-f", "lavfi", "-i", f"color=c={bg_color}:s={w}x{h}:r=30"]
-    vf = f"{_fit(w, h)},subtitles={srt_name}:force_style='{style}'"
+    vf = f"{_fit(w, h)},ass={ass_name}"
     cmd += ["-i", audio_path, "-map", "0:v", "-map", "1:a", "-vf", vf]
     return cmd
 
 
-def _cmd_sections(audio_path, seg_bgs, srt_name, w, h, style, out_name):
-    """구간별 이미지를 [0, 곡 길이] 전체에 타일처럼 이어 붙인 배경."""
+def _cmd_sections(audio_path, seg_bgs, ass_name, w, h):
+    """구간별 이미지를 [0, 곡 길이] 전체에 타일처럼 이어 붙인 배경 + ASS 자막."""
     duration = _probe_duration(audio_path) or seg_bgs[-1]["end"]
     seg_bgs = sorted(seg_bgs, key=lambda s: float(s["start"]))
 
-    segments = []  # (image_path, dur)
+    segments = []
     for i, s in enumerate(seg_bgs):
         seg_start = 0.0 if i == 0 else float(s["start"])
         seg_end = float(seg_bgs[i + 1]["start"]) if i + 1 < len(seg_bgs) else duration
@@ -88,7 +78,7 @@ def _cmd_sections(audio_path, seg_bgs, srt_name, w, h, style, out_name):
         fc += f"[{k}:v]{_fit(w, h)},fps=30[v{k}];"
     fc += "".join(f"[v{k}]" for k in range(n))
     fc += f"concat=n={n}:v=1:a=0[bg];"
-    fc += f"[bg]subtitles={srt_name}:force_style='{style}'[v]"
+    fc += f"[bg]ass={ass_name}[v]"
 
     cmd += ["-filter_complex", fc, "-map", "[v]", "-map", f"{n}:a"]
     return cmd
@@ -103,30 +93,30 @@ def render(
     aspect: str = "16:9",
     bg_color: str = "black",
     font: str = "Malgun Gothic",
-    font_size: int = 28,
+    font_size: int = 48,
+    subtitle_style: str = "ballad",
 ) -> str:
     w, h = ASPECTS.get(aspect, (1920, 1080))
     os.makedirs(out_dir, exist_ok=True)
 
-    srt_name = f"{uuid.uuid4().hex}.srt"
+    ass_name = f"{uuid.uuid4().hex}.ass"
     out_name = f"{uuid.uuid4().hex}.mp4"
-    srt_path = os.path.join(out_dir, srt_name)
-    with open(srt_path, "w", encoding="utf-8") as f:
-        f.write(scenes_to_srt(scenes))
-
-    style = _style(font, font_size)
+    ass_path = os.path.join(out_dir, ass_name)
+    with open(ass_path, "w", encoding="utf-8") as f:
+        f.write(ass_mod.build_ass(scenes, w, h, subtitle_style, font=font, font_size=font_size))
 
     seg_bgs = [
         s for s in (sections or [])
         if s.get("image_path") and os.path.exists(s["image_path"])
     ]
     if seg_bgs:
-        cmd = _cmd_sections(audio_path, seg_bgs, srt_name, w, h, style, out_name)
+        cmd = _cmd_sections(audio_path, seg_bgs, ass_name, w, h)
     else:
-        cmd = _cmd_single(audio_path, background_path, srt_name, w, h, style, bg_color, out_name)
+        cmd = _cmd_single(audio_path, background_path, ass_name, w, h, bg_color)
 
     cmd += [
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-profile:v", "high", "-bf", "2",
         "-pix_fmt", "yuv420p", "-r", "30",
         "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
         "-shortest", "-movflags", "+faststart",
@@ -136,7 +126,7 @@ def render(
     proc = subprocess.run(cmd, cwd=out_dir, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     try:
-        os.remove(srt_path)
+        os.remove(ass_path)
     except OSError:
         pass
     if proc.returncode != 0:

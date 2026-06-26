@@ -6,6 +6,8 @@ let stopAt = null;
 let statusTimer = null;
 let isAligning = false;
 let localAudioUrl = null;
+let anchor = null; // 일관성 참조 { image_id, image_url, has_face }
+let useRef = true;
 
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
@@ -103,6 +105,7 @@ function normalizeScenes(input) {
     end: round2(sc.end),
     text: sc.text || "",
     section: sc.section || "",
+    words: sc.words || [],
     image_prompt: sc.image_prompt || "",
     image_path: sc.image_path || "",
     video_path: sc.video_path || "",
@@ -244,8 +247,10 @@ $("audioFile").addEventListener("change", (e) => {
   audioId = null;
   scenes = [];
   sectionsState = [];
+  anchor = null;
   renderRows();
   renderSectionCards();
+  renderAnchor();
   setWorkflow(1);
   setAudioPreview(file);
   $("audioName").textContent = file ? file.name : "MP3, WAV 등 오디오 파일 선택";
@@ -389,7 +394,8 @@ $("renderBtn").addEventListener("click", async () => {
         aspect: getAspect(),
         bg_id: bgId,
         bg_color: $("bgColor").value,
-        font_size: Number($("fontSize").value) || 28,
+        font_size: Number($("fontSize").value) || 48,
+        subtitle_style: $("subtitleStyle").value,
         sections: sectionsState
           .filter((s) => s.image_id)
           .map((s) => ({ start: s.start, end: s.end, image_id: s.image_id })),
@@ -463,7 +469,12 @@ function renderSectionCards() {
     gen.type = "button";
     gen.className = "mini-btn gen";
     gen.textContent = `${CANDIDATE_COUNT}장 생성`;
-    rowEl.append(input, gen);
+    const setRef = document.createElement("button");
+    setRef.type = "button";
+    setRef.className = "mini-btn anchor-set";
+    setRef.textContent = "참조로";
+    setRef.title = "이 구간의 선택 이미지를 일관성 참조로 지정";
+    rowEl.append(input, gen, setRef);
 
     const body = document.createElement("div");
     body.className = "section-body";
@@ -478,8 +489,15 @@ function renderSectionCards() {
         pick.className = "candidate" + (c.image_id === s.image_id ? " selected" : "");
         pick.dataset.imageId = c.image_id;
         pick.dataset.imageUrl = c.image_url;
+        pick.dataset.hasFace = c.has_face ? "1" : "";
         pick.style.backgroundImage = `url('${c.image_url}')`;
         pick.setAttribute("aria-label", "이 이미지 선택");
+        if (c.has_face) {
+          const badge = document.createElement("span");
+          badge.className = "face-badge";
+          badge.textContent = "얼굴";
+          pick.appendChild(badge);
+        }
         cands.append(pick);
       });
       body.append(cands);
@@ -488,6 +506,7 @@ function renderSectionCards() {
     card.append(thumb, body);
     box.appendChild(card);
   });
+  scheduleAutosave();
 }
 
 async function groupSections() {
@@ -509,6 +528,8 @@ async function groupSections() {
       subtitle: s.subtitle !== false,
     }));
     renderSectionCards();
+    renderAnchor();
+    renderChapters();
     status(`${sectionsState.length}개 구간으로 나눴습니다. 구간별로 ‘${CANDIDATE_COUNT}장 생성’ 후 1장을 고르세요.`, "ok");
   } catch (e) {
     status("구간 나누기 실패: " + e.message, "err");
@@ -529,23 +550,65 @@ async function genCandidates(card, s, genBtn) {
         aspect: getAspect(),
         count: CANDIDATE_COUNT,
         label: s.label,
+        ref_image_id: useRef && anchor ? anchor.image_id : "",
       }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     s.candidates = data.candidates || [];
     if (s.candidates[0]) {
-      s.image_id = s.candidates[0].image_id;
-      s.image_url = s.candidates[0].image_url;
+      const c0 = s.candidates[0];
+      s.image_id = c0.image_id;
+      s.image_url = c0.image_url;
+      s.has_face = !!c0.has_face;
+      if (!anchor) setAnchor(s);
     }
     renderSectionCards();
-    status(`${s.label} 후보 ${s.candidates.length}장 생성 완료. 마음에 드는 1장을 클릭하세요.`, "ok");
+    const refNote = useRef && anchor ? " (참조 적용)" : "";
+    status(`${s.label} 후보 ${s.candidates.length}장 생성 완료${refNote}. 1장을 클릭해 선택하세요.`, "ok");
   } catch (err) {
     status("이미지 생성 실패: " + err.message, "err");
   } finally {
     genBtn.disabled = false;
   }
 }
+
+function setAnchor(s) {
+  anchor = { image_id: s.image_id, image_url: s.image_url, has_face: !!s.has_face };
+  renderAnchor();
+}
+
+function renderAnchor() {
+  const bar = $("anchorBar");
+  if (!sectionsState.length) {
+    bar.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+  const thumb = $("anchorThumb");
+  if (anchor && anchor.image_url) {
+    thumb.style.backgroundImage = `url('${anchor.image_url}')`;
+    $("anchorLabel").textContent = anchor.has_face ? "인물 참조 · 얼굴 감지됨" : "컨셉 참조";
+    $("anchorHint").textContent = anchor.has_face
+      ? "이후 생성에 이 인물을 참조해 일관성을 유지합니다."
+      : "이후 생성에 이 컨셉/분위기를 참조해 유지합니다.";
+  } else {
+    thumb.style.backgroundImage = "";
+    $("anchorLabel").textContent = "참조 없음";
+    $("anchorHint").textContent = "이미지를 선택하면 자동으로 참조가 됩니다.";
+  }
+  $("useRefChk").checked = useRef;
+}
+
+$("useRefChk").addEventListener("change", (e) => {
+  useRef = e.target.checked;
+});
+
+$("clearAnchorBtn").addEventListener("click", () => {
+  anchor = null;
+  renderAnchor();
+  status("참조를 해제했습니다.", "ok");
+});
 
 $("genImagesBtn").addEventListener("click", groupSections);
 
@@ -568,7 +631,17 @@ $("sections").addEventListener("click", (e) => {
   if (pick) {
     s.image_id = pick.dataset.imageId;
     s.image_url = pick.dataset.imageUrl;
+    s.has_face = pick.dataset.hasFace === "1";
+    if (!anchor) setAnchor(s); // 첫 선택을 자동 참조로 지정
     renderSectionCards();
+    return;
+  }
+
+  const setRefBtn = e.target.closest(".anchor-set");
+  if (setRefBtn) {
+    if (!s.image_id) return status("먼저 이 구간 이미지를 선택하세요.", "err");
+    setAnchor(s);
+    status(anchor.has_face ? "인물 참조로 지정했습니다." : "컨셉 참조로 지정했습니다.", "ok");
     return;
   }
 
@@ -587,9 +660,12 @@ function collectState() {
     sections: sectionsState,
     style: $("imgStyle").value,
     aspect: getAspect(),
-    font_size: Number($("fontSize").value) || 28,
+    font_size: Number($("fontSize").value) || 48,
+    subtitle_style: $("subtitleStyle").value,
     bg_color: $("bgColor").value,
     bg_id: bgId,
+    anchor,
+    use_ref: useRef,
   };
 }
 
@@ -598,17 +674,23 @@ function applyState(st) {
   scenes = normalizeScenes(st.scenes || []);
   sectionsState = st.sections || [];
   bgId = st.bg_id || null;
+  anchor = st.anchor || null;
+  useRef = st.use_ref !== false;
   $("lyrics").value = st.lyrics || "";
   $("language").value = st.language || "ko";
   $("imgStyle").value = st.style || "";
-  $("fontSize").value = st.font_size || 28;
+  $("fontSize").value = st.font_size || 48;
+  $("subtitleStyle").value = st.subtitle_style || "ballad";
   $("bgColor").value = st.bg_color || "#101114";
+  updateStylePreview();
   const asp = document.querySelector(`input[name="aspect"][value="${st.aspect || "16:9"}"]`);
   if (asp) asp.checked = true;
   if (st.audio_url) audio.src = st.audio_url;
   stopAt = null;
   renderRows();
   renderSectionCards();
+  renderAnchor();
+  renderChapters();
   updateLyricStats();
   setWorkflow(scenes.length ? 3 : 1);
   updateActionState();
@@ -669,7 +751,111 @@ async function loadProject() {
 $("saveProjectBtn").addEventListener("click", saveProject);
 $("loadProjectBtn").addEventListener("click", loadProject);
 
+// ---- YouTube 설명란 챕터 (구간 타임스탬프 재활용) ----
+function fmtClock(t) {
+  t = Math.max(0, Math.round(+t || 0));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = t % 60;
+  const mm = h ? String(m).padStart(2, "0") : String(m);
+  return (h ? h + ":" : "") + mm + ":" + String(s).padStart(2, "0");
+}
+
+function buildChapters() {
+  if (!sectionsState.length) return "";
+  return sectionsState
+    .slice()
+    .sort((a, b) => a.start - b.start)
+    .map((s, i) => `${fmtClock(i === 0 ? 0 : s.start)} ${s.label || "구간 " + (i + 1)}`)
+    .join("\n");
+}
+
+function renderChapters() {
+  const box = $("ytExport");
+  if (!box) return;
+  if (sectionsState.length) {
+    box.classList.remove("hidden");
+    $("chaptersBox").value = buildChapters();
+  } else {
+    box.classList.add("hidden");
+    $("chaptersBox").value = "";
+  }
+}
+
+$("copyChaptersBtn").addEventListener("click", async () => {
+  const txt = $("chaptersBox").value;
+  if (!txt) return status("먼저 구간을 나누세요.", "err");
+  try {
+    await navigator.clipboard.writeText(txt);
+  } catch (e) {
+    $("chaptersBox").select();
+    document.execCommand("copy");
+  }
+  status("챕터를 복사했습니다. 유튜브 설명란에 붙여넣으세요.", "ok");
+});
+
+// ---- 자막 스타일 미리보기 ----
+const PRESET_PREVIEW = {
+  ballad: { base: "#FFFFFF", hi: "#FFE08A", outline: "#101010" },
+  kpop: { base: "#FFFFFF", hi: "#FF5FA2", outline: "#101010" },
+  citypop: { base: "#FFF4E0", hi: "#7DE0FF", outline: "#201430" },
+  simple: { base: "#FFFFFF", hi: "#FFFFFF", outline: "#000000" },
+};
+function updateStylePreview() {
+  const el = $("stylePreview");
+  if (!el) return;
+  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
+  const o = p.outline;
+  const sh = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
+  el.innerHTML =
+    `<span style="color:${p.hi};text-shadow:${sh}">부르는 단어</span> ` +
+    `<span style="color:${p.base};text-shadow:${sh}">가사 미리보기</span>`;
+}
+$("subtitleStyle").addEventListener("change", updateStylePreview);
+
+// ---- 자동저장 (브라우저 localStorage · 디바운스 1.5s) ----
+const AUTOSAVE_KEY = "subsong_autosave";
+let autosaveTimer = null;
+function scheduleAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    try {
+      const st = collectState();
+      if ((st.scenes || []).length || (st.lyrics || "").trim()) {
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ at: Date.now(), state: st }));
+      }
+    } catch (e) {
+      /* 용량 초과 등 무시 */
+    }
+  }, 1500);
+}
+document.addEventListener("input", scheduleAutosave, true);
+document.addEventListener("change", scheduleAutosave, true);
+
+function offerRestore() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null");
+  } catch (e) {
+    saved = null;
+  }
+  if (!saved || !saved.state || !(saved.state.scenes || []).length) return;
+  const bar = $("restoreBar");
+  $("restoreInfo").textContent = `이전 작업(${new Date(saved.at).toLocaleString()})이 있습니다. 복구할까요?`;
+  bar.classList.remove("hidden");
+  $("restoreBtn").onclick = () => {
+    applyState(saved.state);
+    bar.classList.add("hidden");
+    status("이전 작업을 복구했습니다.", "ok");
+  };
+  $("restoreDismiss").onclick = () => bar.classList.add("hidden");
+}
+
 updateLyricStats();
 updateActionState();
 renderSectionCards();
+renderAnchor();
+renderChapters();
+updateStylePreview();
 refreshProjects();
+offerRestore();

@@ -1,0 +1,9 @@
+.git/
+.claude/
+data/
+**/__pycache__/
+*.pyc
+*.mp4
+*.srt
+*.wav
+.venv/

@@ -22,6 +22,14 @@
     </ol>
   </header>
 
+  <div id="restoreBar" class="restore-bar hidden">
+    <span id="restoreInfo"></span>
+    <span class="restore-actions">
+      <button type="button" id="restoreBtn" class="mini-btn">복구</button>
+      <button type="button" id="restoreDismiss" class="mini-btn">무시</button>
+    </span>
+  </div>
+
   <main class="studio">
     <section class="panel input-panel" id="inputCard">
       <div class="section-title">
@@ -128,6 +136,19 @@
           <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
         </div>
         <input type="text" id="imgStyle" placeholder="전체 분위기 (예: 쓸쓸한 밤, 영화같은, 푸른 톤)" />
+
+        <div id="anchorBar" class="anchor-bar hidden">
+          <div class="anchor-thumb" id="anchorThumb"></div>
+          <div class="anchor-info">
+            <b id="anchorLabel">참조 없음</b>
+            <small id="anchorHint">이미지를 선택하면 자동으로 참조가 됩니다.</small>
+          </div>
+          <label class="anchor-toggle" title="이후 생성에 참조 적용">
+            <input type="checkbox" id="useRefChk" checked /><span>참조 적용</span>
+          </label>
+          <button type="button" id="clearAnchorBtn" class="mini-btn">해제</button>
+        </div>
+
         <div id="sections" class="sections"></div>
         <span class="muted">구간을 나눈 뒤 구간별로 후보 4장을 생성해 1장씩 고릅니다. 고른 이미지가 배경으로 쓰입니다.</span>
       </div>
@@ -153,12 +174,23 @@
       <div class="settings-grid">
         <label class="field" for="fontSize">
           <span class="field-label">자막 크기</span>
-          <input type="number" id="fontSize" value="28" min="12" max="96" />
+          <input type="number" id="fontSize" value="48" min="20" max="120" />
         </label>
         <label class="field color-field" for="bgColor">
           <span class="field-label">배경색</span>
           <input type="color" id="bgColor" value="#101114" />
         </label>
+      </div>
+
+      <div class="field">
+        <span class="field-label">자막 스타일</span>
+        <select id="subtitleStyle">
+          <option value="ballad" selected>발라드 · 단어 하이라이트</option>
+          <option value="kpop">K-pop · 강조</option>
+          <option value="citypop">시티팝</option>
+          <option value="simple">심플 · 하이라이트 없음</option>
+        </select>
+        <div id="stylePreview" class="style-preview"><span>가사 미리보기</span></div>
       </div>
 
       <div class="field">
@@ -170,6 +202,15 @@
       <div class="actions">
         <button type="button" id="srtBtn" class="ghost" disabled>SRT 내보내기</button>
         <button type="button" id="renderBtn" class="primary" disabled>MP4 만들기</button>
+      </div>
+
+      <div id="ytExport" class="yt-export hidden">
+        <div class="label-row">
+          <span class="field-label">YouTube 설명란 챕터</span>
+          <button type="button" id="copyChaptersBtn" class="link-btn">복사</button>
+        </div>
+        <textarea id="chaptersBox" rows="5" readonly></textarea>
+        <span class="muted">설명란에 붙여넣으면 자동 챕터가 됩니다 (첫 줄 0:00 · 3개 이상 · 각 10초 이상).</span>
       </div>
 
       <div id="result" class="result hidden">

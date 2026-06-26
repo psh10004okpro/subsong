@@ -1,0 +1,8 @@
+# 컨테이너용 (torch는 Dockerfile에서 cu124 빌드로 먼저 설치)
+stable-ts
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+opencv-python-headless
+requests

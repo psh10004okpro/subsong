@@ -25,17 +25,22 @@ def get_model():
                 "stable-ts가 설치되어 있지 않습니다. "
                 "`pip install -r requirements.txt` 실행 후 다시 시도하세요."
             ) from exc
-        _model = stable_whisper.load_model(_MODEL_NAME)
+        kwargs = {}
+        model_dir = os.environ.get("SUBSONG_MODEL_DIR")
+        if model_dir:
+            kwargs["download_root"] = model_dir  # 모델을 영속 볼륨에 캐시
+        _model = stable_whisper.load_model(_MODEL_NAME, **kwargs)
     return _model
 
 
-def _scene(idx, start, end, text, section=""):
+def _scene(idx, start, end, text, section="", words=None):
     return {
         "id": idx,
         "start": round(float(start), 2),
         "end": round(float(end), 2),
         "text": text,
         "section": section,  # [Verse 1] 같은 구간 라벨 (이미지 묶기에 사용)
+        "words": words or [],  # 단어별 타이밍 (ASS 노래방 하이라이트에 사용)
         # --- 2차(이미지/영상 API)에서 채워질 빈 칸 ---
         "image_prompt": "",
         "image_path": "",
@@ -71,5 +76,15 @@ def align(audio_path: str, lyrics: str, language: str = "ko"):
         if not line:
             continue
         section = pairs[i][1] if i < len(pairs) else ""
-        scenes.append(_scene(len(scenes), seg.start, seg.end, line, section))
+        words = []
+        for w in (getattr(seg, "words", None) or []):
+            wt = (getattr(w, "word", "") or "").strip()
+            if not wt:
+                continue
+            words.append({
+                "w": wt,
+                "start": round(float(w.start), 2),
+                "end": round(float(w.end), 2),
+            })
+        scenes.append(_scene(len(scenes), seg.start, seg.end, line, section, words))
     return scenes

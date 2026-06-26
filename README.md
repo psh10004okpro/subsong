@@ -66,8 +66,12 @@ data/                업로드·출력 파일 (git 제외)
 - UI: 출력 패널 "배경 이미지 · 구간별" → 스타일 입력 → `구간 나누기`
   → 구간별 `4장 생성` → 후보 썸네일 중 1장 클릭 선택 → `MP4 만들기`.
 - 구간별 **자막 on/off** 체크박스(반복 후렴 등 자막 제외 가능).
-- 관련 파일: `backend/sections.py`, `backend/images.py`,
-  `backend/providers/placeholder_provider.py`, API `/api/images`(구간묶기)·`/api/candidates`(후보 N장).
+- **일관성 참조(anchor)**: 선택한 이미지를 참조로 잡아 이후 생성에 i2i로 전달.
+  얼굴 감지(`backend/face.py`, OpenCV)로 **인물 참조**(얼굴 O → 같은 인물 유지) /
+  **컨셉 참조**(얼굴 X → 분위기 유지)를 자동 분류. "참조 바"에서 적용/해제.
+  프롬프트를 고친 뒤 `4장 생성`을 누르면 재생성된다.
+- 관련 파일: `backend/sections.py`, `backend/images.py`, `backend/face.py`,
+  `backend/providers/placeholder_provider.py`, API `/api/images`(구간묶기)·`/api/candidates`(후보 N장, `ref_image_id`).
 
 ### 마브 외부 API로 실제 이미지 생성
 `backend/providers/marv_provider.py` 가 마브 `/v1/image`(Z-Image-Turbo)로 생성. 활성화:

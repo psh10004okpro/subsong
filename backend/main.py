@@ -21,7 +21,8 @@ from . import render as render_mod
 from .srt import scenes_to_srt
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA = os.path.join(BASE, "data")
+# 배포 시 영속 볼륨을 가리키도록 환경변수로 교체 가능 (예: /data)
+DATA = os.environ.get("SUBSONG_DATA_DIR") or os.path.join(BASE, "data")
 FRONT = os.path.join(BASE, "frontend")
 PROJECTS = os.path.join(DATA, "projects")
 os.makedirs(DATA, exist_ok=True)
@@ -36,6 +37,7 @@ class Scene(BaseModel):
     end: float
     text: str
     section: str = ""
+    words: list[dict] = []
     image_prompt: str = ""
     image_path: str = ""
     video_path: str = ""
@@ -56,6 +58,7 @@ class CandidatesReq(BaseModel):
     aspect: str = "16:9"
     count: int = 4
     label: str = ""
+    ref_image_id: str = ""
 
 
 class SectionBg(BaseModel):
@@ -70,8 +73,9 @@ class RenderReq(BaseModel):
     aspect: str = "16:9"
     bg_id: str | None = None
     bg_color: str = "black"
-    font: str = "Malgun Gothic"
-    font_size: int = 28
+    font: str = os.environ.get("SUBSONG_FONT", "Malgun Gothic")
+    font_size: int = 48
+    subtitle_style: str = "ballad"
     sections: list[SectionBg] = []
 
 
@@ -127,6 +131,7 @@ def api_candidates(req: CandidatesReq):
     try:
         cands = images_mod.generate_candidates(
             req.prompt, DATA, count=req.count, aspect=req.aspect, label=req.label,
+            ref_image_id=req.ref_image_id or None,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"이미지 생성 실패: {e}")
@@ -166,6 +171,7 @@ def api_render(req: RenderReq):
             bg_color=req.bg_color,
             font=req.font,
             font_size=req.font_size,
+            subtitle_style=req.subtitle_style,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"영상 합성 실패: {e}")

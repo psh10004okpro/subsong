@@ -37,17 +37,30 @@ class MarvImageProvider(ImageProvider):
             )
         seed = int(kw.get("seed") or 42)
         params = {"aspect": aspect, "seed": seed}
+        data = {
+            "model": self.model,
+            "prompt_ko": prompt,
+            "params_json": json.dumps(params, ensure_ascii=False),
+        }
 
-        r = requests.post(
-            f"{self.base}/v1/image",
-            headers=self._headers(),
-            data={
-                "model": self.model,
-                "prompt_ko": prompt,
-                "params_json": json.dumps(params, ensure_ascii=False),
-            },
-            timeout=60,
-        )
+        # 참조(앵커) 이미지가 있으면 i2i 로 전달 → 인물/컨셉 일관성 유지
+        ref = kw.get("ref_image")
+        files = None
+        fh = None
+        if ref and os.path.exists(ref):
+            fh = open(ref, "rb")
+            files = {"ref_image": (os.path.basename(ref), fh, "image/png")}
+        try:
+            r = requests.post(
+                f"{self.base}/v1/image",
+                headers=self._headers(),
+                data=data,
+                files=files,
+                timeout=60,
+            )
+        finally:
+            if fh:
+                fh.close()
         r.raise_for_status()
         job_id = r.json()["job_id"]
 

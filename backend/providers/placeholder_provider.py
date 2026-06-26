@@ -12,8 +12,25 @@ from PIL import Image, ImageDraw, ImageFont
 from .base import ImageProvider
 
 _SIZES = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)}
-_FONT = r"C:\Windows\Fonts\malgun.ttf"
-_FONT_BOLD = r"C:\Windows\Fonts\malgunbd.ttf"
+def _resolve(cands):
+    for p in cands:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+# Windows(Malgun) / Linux(Nanum·Noto) 한글 폰트를 순서대로 탐색
+_FONT = _resolve([
+    os.environ.get("SUBSONG_FONT_PATH", ""),
+    r"C:\Windows\Fonts\malgun.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+])
+_FONT_BOLD = _resolve([
+    r"C:\Windows\Fonts\malgunbd.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+]) or _FONT
 
 # 구간마다 구분되는 차분한 어두운 색들 (흰 글자가 잘 보이도록)
 _PALETTE = [
@@ -24,11 +41,20 @@ _PALETTE = [
 
 
 def _font(size, bold=False):
-    path = _FONT_BOLD if bold and os.path.exists(_FONT_BOLD) else _FONT
-    try:
-        return ImageFont.truetype(path, size)
-    except Exception:
-        return ImageFont.load_default()
+    path = _FONT_BOLD if bold else _FONT
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def _avg_color(path):
+    im = Image.open(path).convert("RGB").resize((16, 16))
+    px = list(im.getdata())
+    n = len(px)
+    return tuple(sum(p[i] for p in px) // n for i in range(3))
 
 
 def _wrap(draw, text, font, max_w):
@@ -55,7 +81,20 @@ class PlaceholderImageProvider(ImageProvider):
         # seed가 다르면 색이 달라져 후보 4장이 서로 구분된다.
         key = f"{prompt}|{label}|{kw.get('seed')}"
         seed = int(hashlib.md5(key.encode("utf-8")).hexdigest(), 16)
-        top = _PALETTE[seed % len(_PALETTE)]
+
+        # 참조(앵커) 이미지가 있으면 그 평균색을 기반으로 → 일관성이 눈에 보임
+        ref = kw.get("ref_image")
+        ref_used = False
+        if ref and os.path.exists(ref):
+            try:
+                base = _avg_color(ref)
+                jit = (seed % 24) - 12
+                top = tuple(int(max(0, min(255, c + jit))) for c in base)
+                ref_used = True
+            except Exception:
+                top = _PALETTE[seed % len(_PALETTE)]
+        else:
+            top = _PALETTE[seed % len(_PALETTE)]
         bottom = tuple(max(0, c - 16) for c in top)
 
         img = Image.new("RGB", (w, h))
@@ -79,8 +118,10 @@ class PlaceholderImageProvider(ImageProvider):
                       fill=(176, 184, 204), anchor="mm")
 
         f_tag = _font(int(w * 0.018))
-        draw.text((w * 0.5, h * 0.92), "PLACEHOLDER · 실제 이미지 생성기로 교체 예정",
-                  font=f_tag, fill=(120, 130, 152), anchor="mm")
+        tag = "PLACEHOLDER · 실제 이미지 생성기로 교체 예정"
+        if ref_used:
+            tag += " · 참조 적용"
+        draw.text((w * 0.5, h * 0.92), tag, font=f_tag, fill=(120, 130, 152), anchor="mm")
 
         img.save(out_path)
         return out_path
