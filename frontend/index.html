@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>subsong · 가사 싱크 / 뮤직비디오 생성기</title>
+  <title>subsong · AI 뮤직비디오 스튜디오</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,16 +11,26 @@
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">S</span>
       <div>
-        <h1>subsong</h1>
-        <p>음원과 가사를 맞추고, 자막이 들어간 MP4까지 만드는 로컬 작업대</p>
+        <h1>subsong 스튜디오</h1>
+        <p>음원과 가사로 자막·배경이 들어간 뮤직비디오를 만듭니다</p>
       </div>
     </div>
-    <ol class="workflow" aria-label="작업 단계">
-      <li data-step="1" class="active"><span>1</span>소스</li>
-      <li data-step="2"><span>2</span>싱크</li>
-      <li data-step="3"><span>3</span>출력</li>
-    </ol>
+    <div class="header-right">
+      <span id="saveState" class="save-state"><span class="dot"></span>자동 저장됨</span>
+      <select id="projectSelect" aria-label="저장된 프로젝트">
+        <option value="">저장된 프로젝트…</option>
+      </select>
+      <button type="button" id="loadProjectBtn" class="mini-btn">불러오기</button>
+      <button type="button" id="saveProjectBtn" class="mini-btn">저장</button>
+    </div>
   </header>
+
+  <ol class="steps" id="stepTabs" aria-label="작업 단계">
+    <li data-step="1" class="active"><span>1</span>소스</li>
+    <li data-step="2"><span>2</span>싱크</li>
+    <li data-step="3"><span>3</span>배경</li>
+    <li data-step="4"><span>4</span>출력</li>
+  </ol>
 
   <div id="restoreBar" class="restore-bar hidden">
     <span id="restoreInfo"></span>
@@ -31,30 +41,38 @@
   </div>
 
   <main class="studio">
-    <section class="panel input-panel" id="inputCard">
+    <!-- 공용 미리보기 + 플레이어 (싱크·배경·출력 단계에서 표시) -->
+    <section class="stage hidden" id="stage">
+      <div class="preview-wrap">
+        <div id="preview" class="preview">
+          <div id="previewSub" class="preview-sub"></div>
+          <span id="previewMeta" class="preview-meta"></span>
+        </div>
+      </div>
+      <div class="player-bar">
+        <audio id="audio" controls></audio>
+        <div class="player-meta">
+          <span id="playhead">0:00.0</span>
+          <small id="audioMeta">음원을 선택하면 재생할 수 있습니다.</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1. 소스 -->
+    <section class="panel step active" id="step1" data-step="1">
       <div class="section-title">
         <span class="kicker">Step 1</span>
         <h2>소스 준비</h2>
         <p>음원 파일과 줄 단위 가사를 넣으면 각 줄의 시작/끝 시간을 자동으로 맞춥니다.</p>
       </div>
-
-      <div class="project-bar">
-        <select id="projectSelect" aria-label="저장된 프로젝트">
-          <option value="">저장된 프로젝트…</option>
-        </select>
-        <button type="button" id="loadProjectBtn" class="mini-btn">불러오기</button>
-        <button type="button" id="saveProjectBtn" class="mini-btn">현재 저장</button>
-      </div>
-
       <div class="field">
         <label for="audioFile">음원 파일</label>
         <label class="file-pick" for="audioFile">
           <input type="file" id="audioFile" accept="audio/*" />
           <span id="audioName">MP3, WAV 등 오디오 파일 선택</span>
-          <small>선택하면 오른쪽 플레이어에서 미리 들을 수 있습니다.</small>
+          <small>선택하면 다음 단계 플레이어에서 미리 들을 수 있습니다.</small>
         </label>
       </div>
-
       <div class="field">
         <div class="label-row">
           <label for="lyrics">가사</label>
@@ -63,10 +81,9 @@
         <textarea id="lyrics" rows="12" placeholder="어두운 밤하늘 아래&#10;너의 이름을 불러본다&#10;바람이 스쳐 지나가도"></textarea>
         <div class="field-footer">
           <span id="lyricStats">0줄 · 0자</span>
-          <span>빈 줄은 제외하고 정렬합니다.</span>
+          <span>빈 줄·[구간 표시]는 제외하고 정렬합니다.</span>
         </div>
       </div>
-
       <div class="control-row">
         <label class="select-field" for="language">
           <span>언어</span>
@@ -78,33 +95,23 @@
         </label>
         <button type="button" id="alignBtn" class="primary">자동 정렬 시작</button>
       </div>
-
       <aside class="notice">
         <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
-        <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠르게 시작됩니다.</span>
+        <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠릅니다.</span>
       </aside>
     </section>
 
-    <section class="panel editor-panel" id="editorCard">
+    <!-- 2. 싱크 -->
+    <section class="panel step hidden" id="step2" data-step="2">
       <div class="section-title compact">
         <span class="kicker">Step 2</span>
         <h2>싱크 검토</h2>
-        <p>재생하면서 어긋난 줄의 시작과 끝 시간을 바로 고칩니다.</p>
+        <p>위 미리보기를 재생하면서 어긋난 줄의 시작·끝 시간을 바로 고칩니다.</p>
       </div>
-
-      <div class="player-bar">
-        <audio id="audio" controls></audio>
-        <div class="player-meta">
-          <span id="playhead">0:00.0</span>
-          <small id="audioMeta">음원을 선택하면 재생할 수 있습니다.</small>
-        </div>
-      </div>
-
       <div id="editorEmpty" class="empty-state">
         <strong>아직 정렬된 가사가 없습니다.</strong>
-        <span>왼쪽에서 음원과 가사를 넣고 자동 정렬을 시작하면 줄 단위 편집기가 열립니다.</span>
+        <span>1단계에서 음원과 가사를 넣고 자동 정렬을 시작하면 줄 편집기가 열립니다.</span>
       </div>
-
       <div id="editorTools" class="editor-tools hidden">
         <div class="toolbar">
           <span id="lineSummary">0줄</span>
@@ -112,79 +119,83 @@
         </div>
         <div class="sync-table">
           <div class="listhead" aria-hidden="true">
-            <span>#</span>
-            <span>시작</span>
-            <span>끝</span>
-            <span>가사</span>
-            <span>동작</span>
+            <span>#</span><span>시작</span><span>끝</span><span>가사</span><span>동작</span>
           </div>
           <div id="lines"></div>
         </div>
       </div>
     </section>
 
-    <section class="panel output-panel" id="outputCard">
+    <!-- 3. 배경 -->
+    <section class="panel step hidden" id="step3" data-step="3">
       <div class="section-title compact">
         <span class="kicker">Step 3</span>
-        <h2>출력 설정</h2>
-        <p>SRT를 먼저 확인하거나, 배경과 화면 비율을 정해 MP4를 만듭니다.</p>
+        <h2>배경 이미지</h2>
+        <p>구간을 나눈 뒤 구간마다 AI로 생성하거나 직접 이미지를 올립니다. 미리보기에 바로 반영됩니다.</p>
       </div>
-
       <div class="field">
         <div class="label-row">
-          <label for="imgStyle">배경 이미지 · 구간별 <small>(선택)</small></label>
+          <label for="imgStyle">전체 분위기 <small>(AI 생성용)</small></label>
           <span class="img-actions">
+            <button type="button" id="autoPromptBtn" class="link-btn hidden">✨ 프롬프트 자동작성</button>
             <button type="button" id="genAllBtn" class="link-btn hidden">전체 생성</button>
             <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
           </span>
         </div>
-        <input type="text" id="imgStyle" placeholder="전체 분위기 (예: 쓸쓸한 밤, 영화같은, 푸른 톤)" />
-
+        <input type="text" id="imgStyle" placeholder="예: 쓸쓸한 밤, 영화같은, 푸른 톤" />
         <div id="anchorBar" class="anchor-bar hidden">
           <div class="anchor-thumb" id="anchorThumb"></div>
           <div class="anchor-info">
             <b id="anchorLabel">참조 없음</b>
-            <small id="anchorHint">이미지를 선택하면 자동으로 참조가 됩니다.</small>
+            <small id="anchorHint">이미지를 고르면 자동으로 참조가 됩니다.</small>
           </div>
           <label class="anchor-toggle" title="이후 생성에 참조 적용">
             <input type="checkbox" id="useRefChk" checked /><span>참조 적용</span>
           </label>
           <button type="button" id="clearAnchorBtn" class="mini-btn">해제</button>
         </div>
-
         <div id="sections" class="sections"></div>
-        <span class="muted">구간을 나눈 뒤 구간별로 후보 4장을 생성해 1장씩 고릅니다. 고른 이미지가 배경으로 쓰입니다.</span>
+        <span class="muted">구간별로 ‘AI 4장’ 또는 ‘업로드’로 배경을 정합니다. 고른 이미지가 미리보기·영상 배경이 됩니다.</span>
+      </div>
+    </section>
+
+    <!-- 4. 출력 -->
+    <section class="panel step hidden" id="step4" data-step="4">
+      <div class="section-title compact">
+        <span class="kicker">Step 4</span>
+        <h2>출력</h2>
+        <p>자막 스타일·비율을 정하고 MP4를 만듭니다. 썸네일·챕터·메타데이터도 한 번에.</p>
       </div>
 
       <div class="field">
         <span class="field-label">화면 비율</span>
         <div class="segmented" role="radiogroup" aria-label="화면 비율">
-          <label>
-            <input type="radio" name="aspect" value="16:9" checked />
-            <span>16:9</span>
-          </label>
-          <label>
-            <input type="radio" name="aspect" value="9:16" />
-            <span>9:16</span>
-          </label>
-          <label>
-            <input type="radio" name="aspect" value="1:1" />
-            <span>1:1</span>
-          </label>
+          <label><input type="radio" name="aspect" value="16:9" checked /><span>16:9</span></label>
+          <label><input type="radio" name="aspect" value="9:16" /><span>9:16</span></label>
+          <label><input type="radio" name="aspect" value="1:1" /><span>1:1</span></label>
         </div>
-        <label class="also-shorts">
-          <input type="checkbox" id="alsoShorts" />
-          <span>+ 9:16 Shorts도 같이 만들기</span>
-        </label>
+        <label class="also-shorts"><input type="checkbox" id="alsoShorts" /><span>+ 9:16 Shorts도 같이 만들기</span></label>
+      </div>
+
+      <div class="field">
+        <div class="label-row">
+          <span class="field-label">자막 크기</span>
+          <span id="fontSizeVal" class="muted">48</span>
+        </div>
+        <input type="range" id="fontSize" min="20" max="120" step="2" value="48" />
       </div>
 
       <div class="settings-grid">
-        <label class="field" for="fontSize">
-          <span class="field-label">자막 크기</span>
-          <input type="number" id="fontSize" value="48" min="20" max="120" />
+        <label class="field" for="subtitlePos">
+          <span class="field-label">자막 위치</span>
+          <select id="subtitlePos">
+            <option value="bottom" selected>하단</option>
+            <option value="middle">중앙</option>
+            <option value="top">상단</option>
+          </select>
         </label>
         <label class="field color-field" for="bgColor">
-          <span class="field-label">배경색</span>
+          <span class="field-label">배경색 <small>(이미지 없을 때)</small></span>
           <input type="color" id="bgColor" value="#101114" />
         </label>
       </div>
@@ -201,9 +212,9 @@
       </div>
 
       <div class="field">
-        <label for="bgFile">배경 이미지/영상</label>
+        <label for="bgFile">공통 배경 이미지/영상 <small>(구간 미설정 시)</small></label>
         <input type="file" id="bgFile" accept="image/*,video/*" />
-        <span id="bgName" class="muted">선택하지 않으면 배경색으로 렌더링합니다.</span>
+        <span id="bgName" class="muted">선택하지 않으면 구간 이미지 또는 배경색을 씁니다.</span>
       </div>
 
       <div class="actions">
@@ -219,6 +230,8 @@
         </div>
       </div>
 
+      <div id="result" class="result hidden"></div>
+
       <div id="ytExport" class="yt-export hidden">
         <div class="field">
           <label for="songTitle">영상 제목 <small>(썸네일·메타데이터용)</small></label>
@@ -228,18 +241,15 @@
           <button type="button" id="thumbBtn" class="ghost">썸네일 생성</button>
           <button type="button" id="metaBtn" class="ghost">메타데이터 생성</button>
         </div>
-
         <div id="thumbResult" class="hidden">
           <img id="thumbPreview" class="thumb-preview" alt="썸네일 미리보기" />
           <a id="thumbDownload" class="download-link" download="thumbnail.png">썸네일 다운로드</a>
         </div>
-
         <div class="label-row">
           <span class="field-label">설명란 챕터</span>
           <button type="button" id="copyChaptersBtn" class="link-btn">복사</button>
         </div>
         <textarea id="chaptersBox" rows="4" readonly></textarea>
-
         <div id="metaWrap" class="hidden">
           <div class="label-row">
             <span class="field-label">제목 · 설명 · 태그</span>
@@ -249,12 +259,12 @@
         </div>
         <span class="muted">챕터·설명을 유튜브 업로드 시 붙여넣으세요. AI 음악 크레딧이 자동 포함됩니다.</span>
       </div>
-
-      <div id="result" class="result hidden">
-        <video id="resultVideo" controls></video>
-        <a id="downloadLink" href="#" download="music_video.mp4" class="download-link">영상 다운로드</a>
-      </div>
     </section>
+
+    <div class="step-nav">
+      <button type="button" id="prevStep" class="ghost">← 이전</button>
+      <button type="button" id="nextStep" class="primary">다음 →</button>
+    </div>
   </main>
 
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>

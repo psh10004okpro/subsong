@@ -8,16 +8,24 @@ import cv2
 _cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
+# cascade 파일이 없거나 손상되면 빈 분류기가 된다 — 그땐 얼굴 판별을 끈다.
+_cascade_ok = not _cascade.empty()
 
 
 def has_face(image_path: str) -> bool:
-    img = cv2.imread(image_path)
-    if img is None:
+    """얼굴 감지는 보조 분류일 뿐이라, 어떤 오류든 False로 흡수한다."""
+    if not _cascade_ok:
         return False
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h = img.shape[0]
-    min_side = max(60, h // 12)  # 너무 작은 오검출 제외
-    faces = _cascade.detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=6, minSize=(min_side, min_side)
-    )
-    return len(faces) > 0
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return False
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h = img.shape[0]
+        min_side = max(60, h // 12)  # 너무 작은 오검출 제외
+        faces = _cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(min_side, min_side)
+        )
+        return len(faces) > 0
+    except Exception:
+        return False

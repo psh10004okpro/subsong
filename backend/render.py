@@ -95,17 +95,21 @@ def render(
     font: str = "Malgun Gothic",
     font_size: int = 48,
     subtitle_style: str = "ballad",
+    subtitle_pos: str = "bottom",
     job=None,
     progress_range=(0.0, 1.0),
 ) -> str:
     w, h = ASPECTS.get(aspect, (1920, 1080))
     os.makedirs(out_dir, exist_ok=True)
 
+    # ASS 문자열을 먼저 만든다(여기서 실패하면 파일을 만들지 않음 → 누수 방지).
+    ass_text = ass_mod.build_ass(scenes, w, h, subtitle_style, font=font,
+                                 font_size=font_size, position=subtitle_pos)
     ass_name = f"{uuid.uuid4().hex}.ass"
     out_name = f"{uuid.uuid4().hex}.mp4"
     ass_path = os.path.join(out_dir, ass_name)
     with open(ass_path, "w", encoding="utf-8") as f:
-        f.write(ass_mod.build_ass(scenes, w, h, subtitle_style, font=font, font_size=font_size))
+        f.write(ass_text)
 
     seg_bgs = [
         s for s in (sections or [])

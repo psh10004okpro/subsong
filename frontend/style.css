@@ -132,14 +132,47 @@ button:disabled {
   color: #fff;
 }
 
-.studio {
-  width: min(1240px, calc(100% - 32px));
-  margin: 24px auto 64px;
+.header-right { display: flex; align-items: center; gap: 8px; }
+.header-right select { min-height: 32px; min-width: 0; max-width: 150px; }
+
+.save-state {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 700; color: var(--ok); white-space: nowrap;
+}
+.save-state .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.save-state.saving { color: var(--muted); }
+.save-state.saving .dot { background: var(--muted); }
+
+.steps {
+  width: min(1100px, calc(100% - 32px));
+  margin: 16px auto 0;
   display: grid;
-  grid-template-columns: minmax(320px, 410px) minmax(0, 1fr);
-  grid-template-areas:
-    "input editor"
-    "input output";
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 0;
+  list-style: none;
+}
+.steps li {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 38px; padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--muted);
+  font-size: 13px; font-weight: 800; cursor: pointer; white-space: nowrap;
+}
+.steps li span {
+  display: grid; place-items: center; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--surface-soft); color: var(--muted);
+  font-size: 12px; font-weight: 800;
+}
+.steps li.active { color: var(--accent-dark); border-color: rgba(19,127,127,.4); background: #ecf7f6; }
+.steps li.active span { background: var(--accent); color: #fff; }
+.steps li.done span { background: var(--ok); color: #fff; }
+
+.studio {
+  width: min(1100px, calc(100% - 32px));
+  margin: 16px auto 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -153,9 +186,43 @@ button:disabled {
   padding: 20px;
 }
 
-.input-panel { grid-area: input; }
-.editor-panel { grid-area: editor; }
-.output-panel { grid-area: output; }
+.stage { display: grid; gap: 12px; }
+.preview-wrap { width: 100%; }
+.preview {
+  position: relative;
+  width: 100%;
+  max-height: 46vh;
+  aspect-ratio: 16 / 9;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #10131c center / cover no-repeat;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.preview-sub {
+  position: absolute; left: 4%; right: 4%; bottom: 7%;
+  text-align: center; font-weight: 800; line-height: 1.25;
+  color: #fff; pointer-events: none;
+}
+.preview-meta {
+  position: absolute; top: 8px; left: 10px;
+  font-size: 11px; color: #aeb4c7;
+  background: rgba(0,0,0,.45); padding: 3px 8px; border-radius: 999px;
+}
+
+.step { display: none; }
+.step.active { display: block; }
+.step-nav { display: flex; justify-content: space-between; gap: 10px; }
+
+@media (min-width: 980px) {
+  .studio.with-stage {
+    grid-template-columns: minmax(0, 1.35fr) minmax(340px, 440px);
+    grid-template-areas: "stage panel" "stage nav";
+  }
+  .studio.with-stage .stage { grid-area: stage; position: sticky; top: 16px; }
+  .studio.with-stage .step.active { grid-area: panel; }
+  .studio.with-stage .step-nav { grid-area: nav; }
+}
 
 .section-title {
   margin-bottom: 18px;
@@ -618,19 +685,23 @@ input[type="color"] {
 .section-head .t { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .section-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
-.section-row input {
-  width: 100%;
+.section-row input.prompt {
+  flex: 1 1 100%;
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px 8px;
   background: #fff;
   font-size: 13px;
+}
+
+.section-row .mini-btn {
+  flex: 1 1 auto;
 }
 
 .section-head-right {
@@ -950,13 +1021,11 @@ input[type="color"] {
     padding-bottom: 2px;
   }
 
-  .studio {
+  .studio.with-stage {
     grid-template-columns: 1fr;
-    grid-template-areas:
-      "input"
-      "editor"
-      "output";
+    grid-template-areas: none;
   }
+  .studio.with-stage .stage { position: static; }
 
   .player-bar {
     grid-template-columns: 1fr;

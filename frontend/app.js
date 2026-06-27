@@ -87,10 +87,28 @@ function hasTimingIssues() {
   return scenes.some((sc) => Number(sc.end) <= Number(sc.start));
 }
 
-function setWorkflow(step) {
-  document.querySelectorAll(".workflow li").forEach((item) => {
-    item.classList.toggle("active", Number(item.dataset.step) <= step);
+let currentStep = 1;
+function goStep(n) {
+  currentStep = Math.max(1, Math.min(4, n));
+  document.querySelectorAll(".steps li").forEach((li) => {
+    const s = Number(li.dataset.step);
+    li.classList.toggle("active", s === currentStep);
+    li.classList.toggle("done", s < currentStep);
   });
+  document.querySelectorAll(".step").forEach((p) => {
+    p.classList.remove("hidden");
+    p.classList.toggle("active", Number(p.dataset.step) === currentStep);
+  });
+  const withStage = currentStep >= 2;
+  $("stage").classList.toggle("hidden", !withStage);
+  document.querySelector(".studio").classList.toggle("with-stage", withStage);
+  $("prevStep").classList.toggle("hidden", currentStep === 1);
+  $("nextStep").classList.toggle("hidden", currentStep === 4);
+  if (withStage) {
+    setPreviewAspect();
+    updatePreview();
+  }
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function getAspect() {
@@ -139,8 +157,8 @@ async function doAlign() {
     sectionsState = [];
     renderRows();
     renderSectionCards();
-    setWorkflow(2);
-    status(`정렬 완료: ${scenes.length}줄을 검토할 수 있습니다.`, "ok");
+    goStep(2);
+    status(`정렬 완료: ${scenes.length}줄. 미리보기로 확인하며 고치세요.`, "ok");
   } catch (e) {
     status("정렬 실패: " + e.message, "err");
   } finally {
@@ -203,6 +221,20 @@ function makeButton(action, text, label, extraClass = "") {
   return button;
 }
 
+// 구간(section)의 start/end는 소속 장면들에서 파생된 값이라, 장면 시간을 고치면
+// 같이 갱신해 줘야 미리보기·렌더의 배경 타이밍이 어긋나지 않는다.
+function syncSectionTimes() {
+  if (!sectionsState.length) return;
+  const byId = new Map(scenes.map((s) => [s.id, s]));
+  sectionsState.forEach((sec) => {
+    const members = (sec.scene_ids || []).map((id) => byId.get(id)).filter(Boolean);
+    if (members.length) {
+      sec.start = round2(Math.min(...members.map((m) => m.start)));
+      sec.end = round2(Math.max(...members.map((m) => m.end)));
+    }
+  });
+}
+
 function updateRowFromInput(target) {
   const row = target.closest(".line");
   if (!row) return;
@@ -224,7 +256,9 @@ function updateRowFromInput(target) {
   if (scene.end <= scene.start) {
     status("끝 시간은 시작 시간보다 커야 합니다.", "err");
   }
+  syncSectionTimes();
   updateActionState();
+  updatePreview();
 }
 
 function updateCurrentLine() {
@@ -251,7 +285,7 @@ $("audioFile").addEventListener("change", (e) => {
   renderRows();
   renderSectionCards();
   renderAnchor();
-  setWorkflow(1);
+  goStep(1);
   setAudioPreview(file);
   $("audioName").textContent = file ? file.name : "MP3, WAV 등 오디오 파일 선택";
   $("audioMeta").textContent = file ? "정렬 전 미리듣기" : "음원을 선택하면 재생할 수 있습니다.";
@@ -294,18 +328,24 @@ $("lines").addEventListener("click", (e) => {
     audio.play();
   } else if (button.dataset.act === "del") {
     scenes.splice(i, 1);
+    syncSectionTimes();
     renderRows();
+    updatePreview();
     return;
   }
 
   row.classList.toggle("invalid", scene.end <= scene.start);
+  syncSectionTimes();
   updateActionState();
+  updatePreview();
 });
 
 $("addRow").addEventListener("click", () => {
   const t = round2(audio.currentTime || 0);
+  // scenes.length는 줄을 지운 뒤 기존 id와 충돌할 수 있다 → 최대 id + 1로 발급.
+  const nextId = scenes.reduce((m, s) => Math.max(m, s.id), -1) + 1;
   scenes.push({
-    id: scenes.length,
+    id: nextId,
     start: t,
     end: round2(t + 2),
     text: "",
@@ -329,7 +369,9 @@ audio.addEventListener("timeupdate", () => {
     stopAt = null;
   }
   updateCurrentLine();
+  updatePreview();
 });
+audio.addEventListener("seeked", updatePreview);
 
 $("bgFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
@@ -354,19 +396,26 @@ $("srtBtn").addEventListener("click", async () => {
   if (!scenes.length) return status("먼저 정렬을 완료하세요.", "err");
   if (hasTimingIssues()) return status("시작/끝 시간이 맞지 않는 줄을 먼저 고치세요.", "err");
 
-  const res = await fetch("/api/srt", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scenes }),
-  });
-  const blob = await res.blob();
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "lyrics.srt";
-  a.click();
-  URL.revokeObjectURL(a.href);
-  setWorkflow(3);
-  status("SRT 저장 완료", "ok");
+  try {
+    const res = await fetch("/api/srt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenes }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t || res.statusText);
+    }
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "lyrics.srt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    status("SRT 저장 완료", "ok");
+  } catch (e) {
+    status("SRT 내보내기 실패: " + e.message, "err");
+  }
 });
 
 let renderJobId = null;
@@ -441,7 +490,6 @@ function listenRenderJob(jid) {
       renderResults(vids);
       hideRenderProgress();
       endRender();
-      setWorkflow(3);
       status(`영상 생성 완료 (${vids.length}개). 아래에서 확인하세요.`, "ok");
     } else if (j.status === "error") {
       hideRenderProgress();
@@ -500,6 +548,7 @@ $("renderBtn").addEventListener("click", async () => {
         bg_color: $("bgColor").value,
         font_size: Number($("fontSize").value) || 48,
         subtitle_style: $("subtitleStyle").value,
+        subtitle_pos: $("subtitlePos").value,
         sections: sectionsState
           .filter((s) => s.image_id)
           .map((s) => ({ start: s.start, end: s.end, image_id: s.image_id })),
@@ -568,13 +617,23 @@ function renderSectionCards() {
     const gen = document.createElement("button");
     gen.type = "button";
     gen.className = "mini-btn gen";
-    gen.textContent = `${CANDIDATE_COUNT}장 생성`;
+    gen.textContent = `AI ${CANDIDATE_COUNT}장`;
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "mini-btn upload";
+    up.textContent = "업로드";
+    up.title = "내 이미지를 이 구간 배경으로";
     const setRef = document.createElement("button");
     setRef.type = "button";
     setRef.className = "mini-btn anchor-set";
     setRef.textContent = "참조로";
     setRef.title = "이 구간의 선택 이미지를 일관성 참조로 지정";
-    rowEl.append(input, gen, setRef);
+    const file = document.createElement("input");
+    file.type = "file";
+    file.accept = "image/*";
+    file.className = "sec-file";
+    file.hidden = true;
+    rowEl.append(input, gen, up, setRef, file);
 
     const body = document.createElement("div");
     body.className = "section-body";
@@ -607,6 +666,7 @@ function renderSectionCards() {
     box.appendChild(card);
   });
   scheduleAutosave();
+  updatePreview();
 }
 
 async function groupSections() {
@@ -630,7 +690,10 @@ async function groupSections() {
     renderSectionCards();
     renderAnchor();
     renderChapters();
-    status(`${sectionsState.length}개 구간으로 나눴습니다. 구간별로 ‘${CANDIDATE_COUNT}장 생성’ 후 1장을 고르세요.`, "ok");
+    status(`${sectionsState.length}개 구간으로 나눴습니다. 가사로 프롬프트를 자동 작성합니다…`, "ok");
+    // 구간 구조는 즉시 보여준다. 프롬프트 자동작성은 블로킹하지 않고 백그라운드로 진행
+    // (실패해도 기본 프롬프트 유지). 그래서 '구간 나누기' 버튼이 어댑터 왕복에 묶이지 않는다.
+    autoWritePrompts(true);
   } catch (e) {
     status("구간 나누기 실패: " + e.message, "err");
   } finally {
@@ -745,9 +808,9 @@ async function genAllCandidates() {
       } catch (e) {
         /* 개별 구간 실패는 건너뜀 */
       }
+      renderSectionCards(); // 각 구간 완료 즉시 표시
+      renderAnchor();
     }
-    renderSectionCards();
-    renderAnchor();
     status("전체 구간 배경 생성 완료. 마음에 안 드는 구간만 다시 고르세요.", "ok");
   } finally {
     btn.disabled = false;
@@ -756,13 +819,67 @@ async function genAllCandidates() {
 }
 $("genAllBtn").addEventListener("click", genAllCandidates);
 
+// 가사 → AI 이미지 프롬프트 자동작성 (마브 어댑터). 가사는 그대로, 배경 설명만 생성.
+async function autoWritePrompts(silent) {
+  if (!sectionsState.length) {
+    if (!silent) status("먼저 구간을 나누세요.", "err");
+    return;
+  }
+  const btn = $("autoPromptBtn");
+  if (btn) btn.disabled = true;
+  // 응답이 도착할 때까지(최대 수십 초) 사용자가 재그룹화하거나 프롬프트를 직접 고칠 수 있다.
+  // 대상 배열을 고정하고, 각 구간의 현재 프롬프트를 스냅샷해 두었다가 적용 시점에 검증한다.
+  const target = sectionsState;
+  const snapshot = target.map((s) => s.image_prompt || "");
+  busy("가사로 배경 이미지 프롬프트를 자동 작성 중입니다…");
+  try {
+    const res = await fetch("/api/auto-prompts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sections: target.map((s) => ({ label: s.label, lines: s.lines || [] })),
+        style: $("imgStyle").value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    if (sectionsState !== target) return; // 그 사이 다시 구간을 나눔 → 낡은 응답 폐기
+    let n = 0;
+    let kept = 0;
+    (data.prompts || []).forEach((p, i) => {
+      if (!target[i] || !p.positive) return;
+      if ((target[i].image_prompt || "") !== snapshot[i]) {
+        kept++; // 대기 중 사용자가 직접 수정함 → 덮어쓰지 않고 보존
+        return;
+      }
+      target[i].image_prompt = p.positive;
+      n++;
+    });
+    renderSectionCards();
+    const extra = kept ? ` (직접 수정한 ${kept}개는 유지)` : "";
+    status(`${n}개 구간 프롬프트를 자동 작성했습니다${extra}. 수정 후 ‘AI ${CANDIDATE_COUNT}장’으로 생성하세요.`, "ok");
+  } catch (e) {
+    // 실패해도 기본(한국어) 프롬프트가 그대로라 진행 가능. 자동 경로에선 스피너만 정리.
+    if (!silent) status("프롬프트 자동작성 실패: " + e.message, "err");
+    else status("프롬프트 자동작성을 건너뜀 — 기본 프롬프트로 진행합니다.", "ok");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+$("autoPromptBtn").addEventListener("click", () => autoWritePrompts(false));
+
 $("sections").addEventListener("change", (e) => {
   const card = e.target.closest(".section-card");
   if (!card) return;
   const s = sectionsState[Number(card.dataset.i)];
   if (!s) return;
   if (e.target.classList.contains("prompt")) s.image_prompt = e.target.value;
-  else if (e.target.classList.contains("subtitle-toggle")) s.subtitle = e.target.checked;
+  else if (e.target.classList.contains("subtitle-toggle")) {
+    s.subtitle = e.target.checked;
+    updatePreview();
+  } else if (e.target.classList.contains("sec-file")) {
+    uploadSectionImage(s, e.target.files[0]);
+  }
 });
 
 $("sections").addEventListener("click", (e) => {
@@ -778,6 +895,12 @@ $("sections").addEventListener("click", (e) => {
     s.has_face = pick.dataset.hasFace === "1";
     if (!anchor) setAnchor(s); // 첫 선택을 자동 참조로 지정
     renderSectionCards();
+    return;
+  }
+
+  const upBtn = e.target.closest(".upload");
+  if (upBtn) {
+    card.querySelector(".sec-file").click();
     return;
   }
 
@@ -806,6 +929,7 @@ function collectState() {
     aspect: getAspect(),
     font_size: Number($("fontSize").value) || 48,
     subtitle_style: $("subtitleStyle").value,
+    subtitle_pos: $("subtitlePos").value,
     song_title: $("songTitle").value,
     bg_color: $("bgColor").value,
     bg_id: bgId,
@@ -826,8 +950,10 @@ function applyState(st) {
   $("imgStyle").value = st.style || "";
   $("fontSize").value = st.font_size || 48;
   $("subtitleStyle").value = st.subtitle_style || "ballad";
+  $("subtitlePos").value = st.subtitle_pos || "bottom";
   $("songTitle").value = st.song_title || "";
   $("bgColor").value = st.bg_color || "#101114";
+  $("fontSizeVal").textContent = $("fontSize").value;
   updateStylePreview();
   const asp = document.querySelector(`input[name="aspect"][value="${st.aspect || "16:9"}"]`);
   if (asp) asp.checked = true;
@@ -837,8 +963,9 @@ function applyState(st) {
   renderSectionCards();
   renderAnchor();
   renderChapters();
+  updateStylePreview();
   updateLyricStats();
-  setWorkflow(scenes.length ? 3 : 1);
+  goStep(scenes.length ? 2 : 1);
   updateActionState();
 }
 
@@ -921,6 +1048,8 @@ function renderChapters() {
   if (!box) return;
   const ga = $("genAllBtn");
   if (ga) ga.classList.toggle("hidden", !sectionsState.length);
+  const ap = $("autoPromptBtn");
+  if (ap) ap.classList.toggle("hidden", !sectionsState.length);
   if (sectionsState.length) {
     box.classList.remove("hidden");
     $("chaptersBox").value = buildChapters();
@@ -1020,6 +1149,8 @@ $("subtitleStyle").addEventListener("change", updateStylePreview);
 const AUTOSAVE_KEY = "subsong_autosave";
 let autosaveTimer = null;
 function scheduleAutosave() {
+  const ind = $("saveState");
+  if (ind) ind.classList.add("saving");
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
     try {
@@ -1030,6 +1161,7 @@ function scheduleAutosave() {
     } catch (e) {
       /* 용량 초과 등 무시 */
     }
+    if (ind) ind.classList.remove("saving");
   }, 1500);
 }
 document.addEventListener("input", scheduleAutosave, true);
@@ -1054,6 +1186,117 @@ function offerRestore() {
   $("restoreDismiss").onclick = () => bar.classList.add("hidden");
 }
 
+// ---- 실시간 미리보기 (배경 + 노래방 자막) ----
+function setPreviewAspect() {
+  const a = getAspect();
+  $("preview").style.aspectRatio = a === "9:16" ? "9 / 16" : a === "1:1" ? "1 / 1" : "16 / 9";
+}
+function applyPreviewStyle() {
+  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
+  const ov = $("previewSub");
+  const fs = Number($("fontSize").value) || 48;
+  const pw = $("preview").clientWidth || 640;
+  ov.style.fontSize = Math.max(11, (fs * pw) / 1920) + "px";
+  const o = p.outline;
+  ov.style.textShadow = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
+  const pos = $("subtitlePos").value;
+  if (pos === "middle") {
+    ov.style.top = "50%"; ov.style.bottom = "auto"; ov.style.transform = "translateY(-50%)";
+  } else if (pos === "top") {
+    ov.style.top = "7%"; ov.style.bottom = "auto"; ov.style.transform = "none";
+  } else {
+    ov.style.top = "auto"; ov.style.bottom = "7%"; ov.style.transform = "none";
+  }
+}
+function escapeHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+  );
+}
+function karaokeHTML(sc, t) {
+  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
+  const words = sc.words && sc.words.length ? sc.words : null;
+  if (!words || $("subtitleStyle").value === "simple") {
+    return `<span style="color:${p.base}">${escapeHtml(sc.text)}</span>`;
+  }
+  return words
+    .map((w) => `<span style="color:${t >= Number(w.start) ? p.hi : p.base}">${escapeHtml(w.w)}</span>`)
+    .join(" ");
+}
+function updatePreview() {
+  const prev = $("preview");
+  if (!prev || currentStep < 2) return;
+  const t = audio.currentTime || 0;
+  let sec = sectionsState.find((s) => t >= s.start && t < s.end);
+  if (!sec && sectionsState.length) {
+    sec = t < sectionsState[0].start ? sectionsState[0] : sectionsState[sectionsState.length - 1];
+  }
+  if (sec && sec.image_url) {
+    prev.style.backgroundImage = `url('${sec.image_url}')`;
+    prev.style.backgroundColor = "";
+  } else {
+    prev.style.backgroundImage = "";
+    prev.style.backgroundColor = $("bgColor").value || "#10131c";
+  }
+  const sc = scenes.find((s) => t >= s.start && t < s.end);
+  let off = false;
+  if (sc) off = sectionsState.some((s) => s.subtitle === false && (s.scene_ids || []).includes(sc.id));
+  $("previewSub").innerHTML = sc && !off ? karaokeHTML(sc, t) : "";
+  applyPreviewStyle();
+  const meta = $("previewMeta");
+  if (meta) {
+    const mm = Math.floor(t / 60);
+    const ss = Math.floor(t % 60);
+    meta.textContent = `미리보기 · ${mm}:${String(ss).padStart(2, "0")}` + (sec ? ` · ${sec.label}` : "");
+  }
+}
+
+// ---- 구간 이미지 직접 업로드 ----
+async function uploadSectionImage(s, file) {
+  if (!file) return;
+  busy(`${s.label} 이미지 업로드 중…`);
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await fetch("/api/upload-bg", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    s.image_id = data.bg_id;
+    s.image_url = data.bg_url || "/data/" + data.bg_id;
+    s.candidates = [{ image_id: s.image_id, image_url: s.image_url, has_face: false }];
+    if (!anchor) setAnchor(s);
+    renderSectionCards();
+    renderAnchor();
+    updatePreview();
+    status(`${s.label} 배경을 올린 이미지로 바꿨습니다.`, "ok");
+  } catch (e) {
+    status("업로드 실패: " + e.message, "err");
+  }
+}
+
+// ---- 단계 네비게이션 ----
+$("stepTabs").addEventListener("click", (e) => {
+  const li = e.target.closest("li[data-step]");
+  if (li) goStep(Number(li.dataset.step));
+});
+$("prevStep").addEventListener("click", () => goStep(currentStep - 1));
+$("nextStep").addEventListener("click", () => goStep(currentStep + 1));
+
+["fontSize", "bgColor", "subtitleStyle", "subtitlePos"].forEach((id) =>
+  $(id).addEventListener("input", updatePreview)
+);
+$("subtitlePos").addEventListener("change", updatePreview);
+$("fontSize").addEventListener("input", () => {
+  $("fontSizeVal").textContent = $("fontSize").value;
+});
+document.querySelectorAll('input[name="aspect"]').forEach((r) =>
+  r.addEventListener("change", () => {
+    setPreviewAspect();
+    updatePreview();
+  })
+);
+window.addEventListener("resize", applyPreviewStyle);
+
 updateLyricStats();
 updateActionState();
 renderSectionCards();
@@ -1062,3 +1305,4 @@ renderChapters();
 updateStylePreview();
 refreshProjects();
 offerRestore();
+goStep(1);

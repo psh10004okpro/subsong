@@ -62,9 +62,20 @@ class MarvImageProvider(ImageProvider):
         job_id = r.json()["job_id"]
 
         deadline = time.time() + self.timeout
+        errors = 0
         while time.time() < deadline:
-            jr = requests.get(f"{self.base}/v1/jobs/{job_id}", headers=self._headers(), timeout=30)
-            jr.raise_for_status()
+            try:
+                jr = requests.get(f"{self.base}/v1/jobs/{job_id}",
+                                  headers=self._headers(), timeout=30)
+                jr.raise_for_status()
+                errors = 0
+            except requests.RequestException:
+                # 폴링 중 단발성 네트워크 오류는 잡 전체를 죽이지 않고 재시도.
+                errors += 1
+                if errors >= 5:
+                    raise RuntimeError("마브 상태 조회가 반복 실패했습니다.")
+                time.sleep(2)
+                continue
             status = jr.json().get("status")
             if status == "finished":
                 break
@@ -76,6 +87,17 @@ class MarvImageProvider(ImageProvider):
 
         dr = requests.get(f"{self.base}/v1/jobs/{job_id}/result", headers=self._headers(), timeout=120)
         dr.raise_for_status()
+        # 결과가 진짜 이미지인지 검증 — 오류 JSON/HTML을 .png로 굽지 않게 한다.
+        content = dr.content
+        ctype = dr.headers.get("Content-Type", "")
+        is_img = (
+            content[:8].startswith(b"\x89PNG")
+            or content[:3] == b"\xff\xd8\xff"
+            or content[:4] == b"RIFF"
+            or "image" in ctype
+        )
+        if not is_img:
+            raise RuntimeError(f"마브 결과가 이미지가 아닙니다(content-type={ctype}, {len(content)}바이트)")
         with open(out_path, "wb") as f:
-            f.write(dr.content)
+            f.write(content)
         return out_path

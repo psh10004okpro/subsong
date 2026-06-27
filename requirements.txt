@@ -5,3 +5,6 @@ stable-ts
 fastapi
 uvicorn[standard]
 python-multipart
+pillow
+opencv-python-headless
+requests

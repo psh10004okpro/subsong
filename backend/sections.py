@@ -23,8 +23,9 @@ def _section(idx, scenes_in, label, style):
     return {
         "index": idx,
         "label": label or f"구간 {idx + 1}",
-        "start": round(float(scenes_in[0]["start"]), 2),
-        "end": round(float(scenes_in[-1]["end"]), 2),
+        # 첫/마지막이 아니라 그룹 내 최소/최대 — 장면 시간이 비단조여도 역전 방지.
+        "start": round(min(float(s["start"]) for s in scenes_in), 2),
+        "end": round(max(float(s["end"]) for s in scenes_in), 2),
         "scene_ids": [s.get("id", i) for i, s in enumerate(scenes_in)],
         "lines": lines,
         "image_prompt": _make_prompt(style, lines, label),

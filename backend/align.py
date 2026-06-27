@@ -14,6 +14,11 @@ _MODEL_NAME = os.environ.get("SUBSONG_MODEL", "large-v3")
 _SECTION_RE = re.compile(r"^\[.*\]$")
 
 
+def _norm(s: str) -> str:
+    """구간 매칭용 정규화 — 공백 제거 + 소문자."""
+    return re.sub(r"\s+", "", (s or "")).lower()
+
+
 def get_model():
     """모델을 한 번만 로드해서 재사용한다(GPU 자동 사용)."""
     global _model
@@ -70,12 +75,29 @@ def align(audio_path: str, lyrics: str, language: str = "ko"):
     text = "\n".join(t for t, _ in pairs)
     result = model.align(audio_path, text, language=language, original_split=True)
 
+    # 세그먼트와 가사 줄을 '인덱스'가 아니라 '텍스트'로 순차 매칭한다.
+    # original_split=True라도 stable-ts가 줄을 병합/분할/누락할 수 있어, 한 번
+    # 어긋나면 인덱스 기반으론 이후 구간 라벨이 전부 밀린다(배경이 엉뚱한 구간에).
     scenes = []
-    for i, seg in enumerate(getattr(result, "segments", [])):
+    j = 0  # pairs 진행 포인터(앞으로만 이동)
+    last_section = ""
+    for seg in getattr(result, "segments", []):
         line = (seg.text or "").strip()
         if not line:
             continue
-        section = pairs[i][1] if i < len(pairs) else ""
+        nline = _norm(line)
+        section = None
+        k = j
+        while k < len(pairs):
+            if _norm(pairs[k][0]) == nline:
+                section = pairs[k][1]
+                j = k + 1
+                break
+            k += 1
+        if section is None:
+            section = last_section  # 매칭 실패(병합/변형) → 직전 구간 유지(경계 오염 방지)
+        else:
+            last_section = section
         words = []
         for w in (getattr(seg, "words", None) or []):
             wt = (getattr(w, "word", "") or "").strip()

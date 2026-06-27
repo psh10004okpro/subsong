@@ -37,12 +37,29 @@ def generate_candidates(prompt, out_dir, count=4, aspect="16:9", label="",
     def one(i):
         image_id = uuid.uuid4().hex + ".png"
         path = os.path.join(out_dir, image_id)
-        prov.generate(prompt, path, aspect=aspect, label=label,
-                      seed=1000 + i, ref_image=ref_path)
-        return {"image_id": image_id, "path": path, "has_face": face_mod.has_face(path)}
+        try:
+            prov.generate(prompt, path, aspect=aspect, label=label,
+                          seed=1000 + i, ref_image=ref_path)
+        except Exception:
+            # 후보 하나가 실패해도 나머지는 살린다.
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+            return None
+        # 얼굴 감지는 보조 정보 — 실패해도 생성된 후보를 버리지 않는다.
+        try:
+            face = face_mod.has_face(path)
+        except Exception:
+            face = False
+        return {"image_id": image_id, "path": path, "has_face": face}
 
     with ThreadPoolExecutor(max_workers=min(count, 4)) as ex:
-        return list(ex.map(one, range(count)))
+        results = [c for c in ex.map(one, range(count)) if c]
+    if not results:
+        raise RuntimeError("이미지 생성에 모두 실패했습니다. 잠시 후 다시 시도하세요.")
+    return results
 
 
 def _cover(src, w, h):

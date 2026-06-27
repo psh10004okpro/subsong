@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from . import align as align_mod
 from . import images as images_mod
 from . import jobs as jobs_mod
+from . import prompts as prompts_mod
 from . import render as render_mod
 from .srt import scenes_to_srt
 
@@ -64,6 +65,11 @@ class CandidatesReq(BaseModel):
     ref_image_id: str = ""
 
 
+class AutoPromptReq(BaseModel):
+    sections: list[dict] = []  # [{label, lines}]
+    style: str = ""
+
+
 class ThumbReq(BaseModel):
     title: str
     subtitle: str = ""
@@ -86,6 +92,7 @@ class RenderReq(BaseModel):
     font: str = os.environ.get("SUBSONG_FONT", "Malgun Gothic")
     font_size: int = 48
     subtitle_style: str = "ballad"
+    subtitle_pos: str = "bottom"
     sections: list[SectionBg] = []
 
 
@@ -133,6 +140,24 @@ def api_images(req: ImagesReq):
         s["image_url"] = ""
         s["subtitle"] = True
     return {"sections": secs}
+
+
+@app.post("/api/auto-prompts")
+def api_auto_prompts(req: AutoPromptReq):
+    """구간 가사(+전체 분위기) → 영화 같은 영어 이미지 프롬프트 자동작성.
+
+    가사는 바꾸지 않는다 — 배경 그림용 설명문(positive/negative)만 만든다.
+    마브 어댑터 실패 시 입력 텍스트를 그대로 돌려준다(폴백).
+    """
+    items = []
+    for s in req.sections:
+        lines = [l for l in (s.get("lines") or []) if (l or "").strip()]
+        items.append({"label": s.get("label", ""), "base": " / ".join(lines)[:200]})
+    try:
+        results = prompts_mod.auto_prompts(items, req.style)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"프롬프트 생성 실패: {e}")
+    return {"prompts": results}
 
 
 @app.post("/api/candidates")
@@ -196,8 +221,8 @@ def api_render(req: RenderReq):
                     sections=sections, background_path=bg_path,
                     aspect=asp, bg_color=req.bg_color,
                     font=req.font, font_size=req.font_size,
-                    subtitle_style=req.subtitle_style, job=job,
-                    progress_range=(i / n, (i + 1) / n),
+                    subtitle_style=req.subtitle_style, subtitle_pos=req.subtitle_pos,
+                    job=job, progress_range=(i / n, (i + 1) / n),
                 )
                 if job.cancelled or out is None:
                     break
@@ -261,7 +286,20 @@ def _slug(name: str) -> str:
 
 @app.post("/api/projects")
 def api_save_project(req: ProjectReq):
-    slug = _slug(req.name)
+    base = _slug(req.name)
+    # 서로 다른 이름이 같은 슬러그로 충돌할 때 남의 작업물을 덮어쓰지 않도록
+    # 일련번호를 붙인다. 같은 이름의 재저장(자동저장 포함)이면 덮어쓴다.
+    slug = base
+    n = 2
+    while os.path.exists(os.path.join(PROJECTS, slug + ".json")):
+        try:
+            with open(os.path.join(PROJECTS, slug + ".json"), encoding="utf-8") as f:
+                if json.load(f).get("name") == req.name:
+                    break  # 같은 프로젝트 → 덮어쓰기 허용
+        except (OSError, ValueError):
+            break
+        slug = f"{base}-{n}"
+        n += 1
     doc = {
         "name": req.name,
         "slug": slug,
@@ -309,5 +347,13 @@ def api_delete_project(slug: str):
 
 # /data: 업로드·출력 파일.  "/": 프론트엔드(index.html, style.css, app.js).
 # API 라우트가 먼저 등록되므로 우선 매칭되고, 나머지는 정적 파일로 처리된다.
+class NoCacheStatic(StaticFiles):
+    """프론트엔드 파일은 캐시 금지 — 코드 수정이 항상 즉시 반영되게."""
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
+
 app.mount("/data", StaticFiles(directory=DATA), name="data")
-app.mount("/", StaticFiles(directory=FRONT, html=True), name="front")
+app.mount("/", NoCacheStatic(directory=FRONT, html=True), name="front")

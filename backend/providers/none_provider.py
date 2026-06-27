@@ -9,12 +9,13 @@ from .base import ImageProvider, VideoProvider
 class NoneImageProvider(ImageProvider):
     name = "none"
 
-    def generate(self, prompt: str, out_path: str, aspect: str = "16:9") -> str:
+    def generate(self, prompt: str, out_path: str, aspect: str = "16:9", **kwargs) -> str:
         return ""
 
 
 class NoneVideoProvider(VideoProvider):
     name = "none"
 
-    def generate(self, prompt: str, image_path: str, out_path: str, aspect: str = "16:9") -> str:
+    def generate(self, prompt: str, image_path: str, out_path: str,
+                 aspect: str = "16:9", **kwargs) -> str:
         return ""

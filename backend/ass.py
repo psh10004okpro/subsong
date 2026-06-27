@@ -46,28 +46,55 @@ def _ts(t):
     return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _karaoke(words, scene_start):
+def _wstart(wd):
+    try:
+        return float(wd.get("start"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _karaoke(words, scene_start, scene_end):
     out = []
-    lead = int(round((float(words[0]["start"]) - scene_start) * 100))
+    first = _wstart(words[0])
+    lead = int(round(((first if first is not None else scene_start) - scene_start) * 100))
     if lead > 0:
         out.append(f"{{\\k{lead}}}")
     n = len(words)
     for i, wd in enumerate(words):
-        nxt = float(words[i + 1]["start"]) if i + 1 < n else float(wd["end"])
-        dur = max(1, int(round((nxt - float(wd["start"])) * 100)))
+        ws = _wstart(wd)
+        if ws is None:
+            ws = scene_start
+        if i + 1 < n:
+            nxt = _wstart(words[i + 1])
+            if nxt is None:
+                nxt = ws
+        else:
+            we = wd.get("end")
+            nxt = float(we) if we is not None else scene_end
+        dur = max(1, int(round((nxt - ws) * 100)))
         token = str(wd.get("w", "")).replace("{", "").replace("}", "").replace("\n", " ")
         out.append(f"{{\\kf{dur}}}{token} ")
     return "".join(out).strip()
 
 
-def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic", font_size=48):
+# 자막 세로 위치 → (ASS Alignment, MarginV)
+_POSITIONS = {
+    "bottom": (2, None),   # 하단 중앙 (MarginV=프리셋값, 아래에서)
+    "middle": (5, 0),      # 화면 중앙
+    "top": (8, None),      # 상단 중앙 (MarginV=프리셋값, 위에서)
+}
+
+
+def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic",
+              font_size=48, position="bottom"):
     p = PRESETS.get(preset, PRESETS[DEFAULT_PRESET])
     primary = _ass_color(p["primary"])
     secondary = _ass_color(p["secondary"])
     outline = _ass_color(p["outline"])
     size = int(font_size or 48)
-    mv = p["margin_v"]
     ow, sh = p["outline_w"], p["shadow"]
+    align, mv_override = _POSITIONS.get(position, _POSITIONS["bottom"])
+    mv = p["margin_v"] if mv_override is None else mv_override
 
     # Style K: 노래방(primary=하이라이트). Style P: 정적(전체 기본색).
     header = (
@@ -80,9 +107,9 @@ def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic", font_si
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: K,{font},{size},{primary},{secondary},{outline},&H64000000,0,0,0,0,"
-        f"100,100,0,0,1,{ow},{sh},2,60,60,{mv},1\n"
+        f"100,100,0,0,1,{ow},{sh},{align},60,60,{mv},1\n"
         f"Style: P,{font},{size},{secondary},{secondary},{outline},&H64000000,0,0,0,0,"
-        f"100,100,0,0,1,{ow},{sh},2,60,60,{mv},1\n\n"
+        f"100,100,0,0,1,{ow},{sh},{align},60,60,{mv},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -98,7 +125,7 @@ def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic", font_si
             end = start + 0.5
         words = sc.get("words") or []
         if p["karaoke"] and words:
-            body, style = _karaoke(words, start), "K"
+            body, style = _karaoke(words, start, end), "K"
         else:
             body, style = text.replace("{", "").replace("}", ""), "P"
         events.append(
