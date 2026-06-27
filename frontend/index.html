@@ -212,6 +212,28 @@
       </div>
 
       <div class="field">
+        <span class="field-label">배경 연출 <small>(구간 전환·모션)</small></span>
+        <div class="settings-grid">
+          <label class="field" for="transition">
+            <span class="field-label">구간 전환</span>
+            <select id="transition">
+              <option value="crossfade" selected>크로스페이드</option>
+              <option value="none">없음 (하드컷)</option>
+            </select>
+          </label>
+          <label class="field" for="transitionDur">
+            <span class="field-label">전환 길이 <span id="transitionDurVal" class="muted">0.8s</span></span>
+            <input type="range" id="transitionDur" min="0.2" max="1.5" step="0.1" value="0.8" />
+          </label>
+        </div>
+        <label class="field" for="kenBurns">
+          <span class="field-label">배경 줌 · Ken Burns <span id="kenBurnsVal" class="muted">없음</span></span>
+          <input type="range" id="kenBurns" min="0" max="0.12" step="0.02" value="0" />
+        </label>
+        <label class="also-shorts"><input type="checkbox" id="introOutro" checked /><span>처음·끝 페이드 인/아웃</span></label>
+      </div>
+
+      <div class="field">
         <label for="bgFile">공통 배경 이미지/영상 <small>(구간 미설정 시)</small></label>
         <input type="file" id="bgFile" accept="image/*,video/*" />
         <span id="bgName" class="muted">선택하지 않으면 구간 이미지 또는 배경색을 씁니다.</span>

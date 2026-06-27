@@ -4,6 +4,7 @@
                     →  /api/srt (SRT 내보내기)  /  /api/render (MP4 출력)
 """
 import json
+import logging
 import os
 import re
 import shutil
@@ -12,8 +13,8 @@ import time
 import uuid
 from datetime import datetime
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,7 +33,33 @@ PROJECTS = os.path.join(DATA, "projects")
 os.makedirs(DATA, exist_ok=True)
 os.makedirs(PROJECTS, exist_ok=True)
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("subsong")
+
 app = FastAPI(title="subsong")
+
+
+@app.exception_handler(OSError)
+async def _oserror_handler(request: Request, exc: OSError):
+    """디스크 풀·권한 등 파일 오류 → 생짜 500 대신 한국어 안내."""
+    logger.exception("OSError on %s", request.url.path)
+    return JSONResponse(
+        status_code=507,
+        content={"detail": "파일을 저장/처리할 수 없습니다. 저장 공간이 부족할 수 있습니다."},
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_handler(request: Request, exc: Exception):
+    """미처리 예외도 서버 로그에 트레이스백을 남기고 한국어 메시지로 응답."""
+    logger.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"서버 오류가 발생했습니다: {exc}"},
+    )
 
 
 class Scene(BaseModel):
@@ -93,6 +120,11 @@ class RenderReq(BaseModel):
     font_size: int = 48
     subtitle_style: str = "ballad"
     subtitle_pos: str = "bottom"
+    transition: str = "none"        # "none"(하드컷) | "crossfade"
+    transition_dur: float = 0.8     # 크로스페이드 길이(초)
+    ken_burns: float = 0.0          # 배경 줌 모션 강도 (0=정지)
+    intro_fade: float = 0.0         # 인트로 페이드인(초, 0=없음)
+    outro_fade: float = 0.0         # 아웃트로 페이드아웃(초, 0=없음)
     sections: list[SectionBg] = []
 
 
@@ -222,6 +254,9 @@ def api_render(req: RenderReq):
                     aspect=asp, bg_color=req.bg_color,
                     font=req.font, font_size=req.font_size,
                     subtitle_style=req.subtitle_style, subtitle_pos=req.subtitle_pos,
+                    transition=req.transition, transition_dur=req.transition_dur,
+                    ken_burns=req.ken_burns,
+                    intro_fade=req.intro_fade, outro_fade=req.outro_fade,
                     job=job, progress_range=(i / n, (i + 1) / n),
                 )
                 if job.cancelled or out is None:
@@ -235,6 +270,8 @@ def api_render(req: RenderReq):
                               "video_url": videos[0]["video_url"] if videos else None}
                 job.status = "done"
         except Exception as e:  # noqa: BLE001
+            # 트레이스백은 서버 로그로(원인 추적), 사용자에겐 요약 메시지.
+            logger.exception("render job %s failed", job.id)
             job.status, job.error = "error", str(e)
 
     threading.Thread(target=run, daemon=True).start()
@@ -263,17 +300,22 @@ def api_job_events(jid: str):
 
     def gen():
         last = None
-        while True:
-            j = jobs_mod.get(jid)
-            if j is None:
-                break
-            data = json.dumps(jobs_mod.snapshot(j), ensure_ascii=False)
-            if data != last:
-                yield f"data: {data}\n\n"
-                last = data
-            if j.status in ("done", "error", "cancelled"):
-                break
-            time.sleep(0.4)
+        try:
+            while True:
+                j = jobs_mod.get(jid)
+                if j is None:
+                    break
+                data = json.dumps(jobs_mod.snapshot(j), ensure_ascii=False)
+                if data != last:
+                    yield f"data: {data}\n\n"
+                    last = data
+                if j.status in ("done", "error", "cancelled"):
+                    break
+                time.sleep(0.4)
+        except Exception:  # noqa: BLE001
+            # 직렬화/전송 오류 시 클라이언트가 종료를 인지하도록 error 이벤트를 보낸다.
+            logger.exception("SSE stream failed for job %s", jid)
+            yield f'data: {json.dumps({"status": "error", "error": "상태 전송 오류"})}\n\n'
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

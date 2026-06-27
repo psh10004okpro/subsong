@@ -53,6 +53,17 @@ function busy(msg) {
   status(msg);
 }
 
+// 전역 안전망 — try/catch 밖에서 터지는 예외·미처리 프라미스도 사용자에게 알린다.
+window.addEventListener("error", (e) => {
+  if (e.target && e.target !== window) return; // 리소스(img 등) 로드 실패는 제외
+  status("예기치 못한 오류가 발생했습니다: " +
+    (e.message || (e.error && e.error.message) || "알 수 없음"), "err");
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason;
+  status("처리되지 않은 오류: " + (r && r.message ? r.message : String(r)), "err");
+});
+
 function lyricLines() {
   return $("lyrics").value
     .split(/\r?\n/)
@@ -325,7 +336,8 @@ $("lines").addEventListener("click", (e) => {
   } else if (button.dataset.act === "play") {
     audio.currentTime = scene.start;
     stopAt = scene.end;
-    audio.play();
+    audio.play().catch((err) =>
+      status("이 줄을 재생할 수 없습니다(오디오 미로드일 수 있음): " + err.message, "err"));
   } else if (button.dataset.act === "del") {
     scenes.splice(i, 1);
     syncSectionTimes();
@@ -372,6 +384,11 @@ audio.addEventListener("timeupdate", () => {
   updatePreview();
 });
 audio.addEventListener("seeked", updatePreview);
+audio.addEventListener("error", () => {
+  // 빈 src(초기 상태)에서의 무해한 이벤트는 무시.
+  if (!audio.currentSrc) return;
+  status("오디오를 불러오지 못했습니다. 음원 파일을 다시 선택하거나 프로젝트를 다시 정렬하세요.", "err");
+});
 
 $("bgFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
@@ -504,7 +521,27 @@ function listenRenderJob(jid) {
     }
   };
   renderES.onerror = () => {
-    /* 연결 끊김은 무시(작업은 서버에서 계속 진행) */
+    // 일시 끊김은 EventSource가 자동 재연결하므로 CLOSED(완전 종료)일 때만 복구한다.
+    if (!renderES || renderES.readyState !== EventSource.CLOSED) return;
+    // 스피너가 영구히 멈추지 않도록: 서버에 작업 상태를 한 번 더 물어 결과를 반영하고 UI를 정리.
+    fetch(`/api/jobs/${jid}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("상태 조회 실패"))))
+      .then((j) => {
+        if (j.status === "done") {
+          const r = j.result || {};
+          const vids = r.videos && r.videos.length
+            ? r.videos
+            : (r.video_url ? [{ aspect: "", video_url: r.video_url }] : []);
+          renderResults(vids);
+          status(`영상 생성 완료 (${vids.length}개).`, "ok");
+        } else if (j.status === "error") {
+          status("영상 생성 실패: " + (j.error || ""), "err");
+        } else {
+          status("진행 상황 연결이 끊겼습니다. 작업은 서버에서 계속되니 잠시 후 새로고침해 결과를 확인하세요.", "err");
+        }
+      })
+      .catch(() => status("진행 상황 연결이 끊겼습니다. 잠시 후 새로고침해 결과를 확인하세요.", "err"))
+      .finally(() => { hideRenderProgress(); endRender(); });
   };
 }
 
@@ -549,6 +586,11 @@ $("renderBtn").addEventListener("click", async () => {
         font_size: Number($("fontSize").value) || 48,
         subtitle_style: $("subtitleStyle").value,
         subtitle_pos: $("subtitlePos").value,
+        transition: $("transition").value,
+        transition_dur: Number($("transitionDur").value) || 0.8,
+        ken_burns: Number($("kenBurns").value) || 0,
+        intro_fade: $("introOutro").checked ? 1.0 : 0,
+        outro_fade: $("introOutro").checked ? 2.0 : 0,
         sections: sectionsState
           .filter((s) => s.image_id)
           .map((s) => ({ start: s.start, end: s.end, image_id: s.image_id })),
@@ -567,8 +609,13 @@ $("renderBtn").addEventListener("click", async () => {
 
 $("alignBtn").addEventListener("click", doAlign);
 
-window.addEventListener("beforeunload", () => {
+window.addEventListener("beforeunload", (e) => {
   if (localAudioUrl) URL.revokeObjectURL(localAudioUrl);
+  // 렌더 진행 중이거나 정렬 중이면 새로고침/닫기 전에 경고(작업·결과 유실 방지).
+  if (renderJobId || isAligning) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
 });
 
 // ---- 2차: 구간별 배경 이미지 (후보 N장 생성 → 1장 선택) ----
@@ -780,6 +827,7 @@ async function genAllCandidates() {
   const btn = $("genAllBtn");
   btn.disabled = true;
   $("genImagesBtn").disabled = true;
+  let ok = 0;
   try {
     for (let i = 0; i < sectionsState.length; i++) {
       const s = sectionsState[i];
@@ -804,14 +852,25 @@ async function genAllCandidates() {
           s.image_url = c0.image_url;
           s.has_face = !!c0.has_face;
           if (!anchor) setAnchor(s);
+          ok++;
         }
       } catch (e) {
-        /* 개별 구간 실패는 건너뜀 */
+        /* 개별 구간 실패는 건너뜀(아래 집계에 반영) */
       }
       renderSectionCards(); // 각 구간 완료 즉시 표시
       renderAnchor();
     }
-    status("전체 구간 배경 생성 완료. 마음에 안 드는 구간만 다시 고르세요.", "ok");
+    // 실패를 성공처럼 보이지 않도록 실제 결과를 반영해 알린다.
+    const total = sectionsState.length;
+    if (ok === 0) {
+      status("배경을 한 장도 생성하지 못했습니다. 프롬프트·네트워크를 확인하고 다시 시도하세요.", "err");
+    } else if (ok < total) {
+      status(`${ok}/${total} 구간만 생성됐습니다. 실패한 구간은 ‘AI ${CANDIDATE_COUNT}장’으로 다시 시도하세요.`, "err");
+    } else {
+      status("전체 구간 배경 생성 완료. 마음에 안 드는 구간만 다시 고르세요.", "ok");
+    }
+  } catch (e) {
+    status("전체 배경 생성 중 오류: " + e.message, "err");
   } finally {
     btn.disabled = false;
     $("genImagesBtn").disabled = false;
@@ -930,6 +989,10 @@ function collectState() {
     font_size: Number($("fontSize").value) || 48,
     subtitle_style: $("subtitleStyle").value,
     subtitle_pos: $("subtitlePos").value,
+    transition: $("transition").value,
+    transition_dur: Number($("transitionDur").value) || 0.8,
+    ken_burns: Number($("kenBurns").value) || 0,
+    intro_outro: $("introOutro").checked,
     song_title: $("songTitle").value,
     bg_color: $("bgColor").value,
     bg_id: bgId,
@@ -951,9 +1014,14 @@ function applyState(st) {
   $("fontSize").value = st.font_size || 48;
   $("subtitleStyle").value = st.subtitle_style || "ballad";
   $("subtitlePos").value = st.subtitle_pos || "bottom";
+  $("transition").value = st.transition || "crossfade";
+  $("transitionDur").value = st.transition_dur || 0.8;
+  $("kenBurns").value = st.ken_burns || 0;
+  $("introOutro").checked = st.intro_outro !== false;
   $("songTitle").value = st.song_title || "";
   $("bgColor").value = st.bg_color || "#101114";
   $("fontSizeVal").textContent = $("fontSize").value;
+  updateFxLabels();
   updateStylePreview();
   const asp = document.querySelector(`input[name="aspect"][value="${st.aspect || "16:9"}"]`);
   if (asp) asp.checked = true;
@@ -969,9 +1037,10 @@ function applyState(st) {
   updateActionState();
 }
 
-async function refreshProjects(selectSlug) {
+async function refreshProjects(selectSlug, notify) {
   try {
     const res = await fetch("/api/projects");
+    if (!res.ok) throw new Error(res.statusText);
     const data = await res.json();
     const sel = $("projectSelect");
     sel.innerHTML = '<option value="">저장된 프로젝트…</option>';
@@ -983,7 +1052,8 @@ async function refreshProjects(selectSlug) {
     });
     if (selectSlug) sel.value = selectSlug;
   } catch (e) {
-    /* 목록 실패는 조용히 무시 */
+    // 시작 시 자동 호출은 조용히, 저장 직후 등 명시 호출(notify)은 사용자에게 알린다.
+    if (notify) status("프로젝트 목록을 불러오지 못했습니다: " + e.message, "err");
   }
 }
 
@@ -999,7 +1069,7 @@ async function saveProject() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    await refreshProjects(data.slug);
+    await refreshProjects(data.slug, true);
     status(`저장 완료: ${name}`, "ok");
   } catch (e) {
     status("저장 실패: " + e.message, "err");
@@ -1289,6 +1359,17 @@ $("subtitlePos").addEventListener("change", updatePreview);
 $("fontSize").addEventListener("input", () => {
   $("fontSizeVal").textContent = $("fontSize").value;
 });
+
+// 배경 연출 슬라이더 값 표시
+function updateFxLabels() {
+  $("transitionDurVal").textContent = Number($("transitionDur").value).toFixed(1) + "s";
+  const kb = Number($("kenBurns").value);
+  $("kenBurnsVal").textContent = kb > 0 ? "+" + Math.round(kb * 100) + "%" : "없음";
+}
+$("transitionDur").addEventListener("input", updateFxLabels);
+$("kenBurns").addEventListener("input", updateFxLabels);
+updateFxLabels();
+
 document.querySelectorAll('input[name="aspect"]').forEach((r) =>
   r.addEventListener("change", () => {
     setPreviewAspect();
