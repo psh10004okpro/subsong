@@ -203,6 +203,8 @@ def render(
     ken_burns: float = 0.0,        # 0=정지, 0.06~0.10=약한 줌
     intro_fade: float = 0.0,       # 0=없음, 인트로 페이드인(초)
     outro_fade: float = 0.0,       # 0=없음, 아웃트로 페이드아웃(초)
+    intro_title: str = "",         # 인트로 타이틀 카드 문구(빈 값=없음)
+    intro_title_dur: float = 3.0,  # 타이틀 카드 표시 길이(초)
     job=None,
     progress_range=(0.0, 1.0),
 ) -> str:
@@ -211,7 +213,8 @@ def render(
 
     # ASS 문자열을 먼저 만든다(여기서 실패하면 파일을 만들지 않음 → 누수 방지).
     ass_text = ass_mod.build_ass(scenes, w, h, subtitle_style, font=font,
-                                 font_size=font_size, position=subtitle_pos)
+                                 font_size=font_size, position=subtitle_pos,
+                                 intro_title=intro_title, intro_title_dur=intro_title_dur)
     ass_name = f"{uuid.uuid4().hex}.ass"
     out_name = f"{uuid.uuid4().hex}.mp4"
     ass_path = os.path.join(out_dir, ass_name)

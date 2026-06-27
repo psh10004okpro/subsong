@@ -138,11 +138,16 @@
           <label for="imgStyle">전체 분위기 <small>(AI 생성용)</small></label>
           <span class="img-actions">
             <button type="button" id="autoPromptBtn" class="link-btn hidden">✨ 프롬프트 자동작성</button>
+            <button type="button" id="beatSnapBtn" class="link-btn hidden">🥁 비트에 맞추기</button>
             <button type="button" id="genAllBtn" class="link-btn hidden">전체 생성</button>
             <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
           </span>
         </div>
         <input type="text" id="imgStyle" placeholder="예: 쓸쓸한 밤, 영화같은, 푸른 톤" />
+        <label class="gap-field" for="gapThreshold">
+          <span>구간 분할 간격 <small>([구간]라벨 없을 때, 이 초 이상 비면 새 구간)</small></span>
+          <input type="number" id="gapThreshold" min="0.4" max="5" step="0.2" value="1.6" />
+        </label>
         <div id="anchorBar" class="anchor-bar hidden">
           <div class="anchor-thumb" id="anchorThumb"></div>
           <div class="anchor-info">
@@ -194,6 +199,17 @@
             <option value="top">상단</option>
           </select>
         </label>
+        <label class="field" for="fontSelect">
+          <span class="field-label">자막 폰트</span>
+          <select id="fontSelect">
+            <option value="Malgun Gothic" selected>맑은 고딕</option>
+            <option value="NanumGothic">나눔고딕</option>
+            <option value="Noto Sans KR">본고딕 (Noto Sans KR)</option>
+            <option value="Noto Serif KR">본명조 (Noto Serif KR)</option>
+            <option value="Gulim">굴림</option>
+            <option value="Batang">바탕</option>
+          </select>
+        </label>
         <label class="field color-field" for="bgColor">
           <span class="field-label">배경색 <small>(이미지 없을 때)</small></span>
           <input type="color" id="bgColor" value="#101114" />
@@ -231,6 +247,7 @@
           <input type="range" id="kenBurns" min="0" max="0.12" step="0.02" value="0" />
         </label>
         <label class="also-shorts"><input type="checkbox" id="introOutro" checked /><span>처음·끝 페이드 인/아웃</span></label>
+        <label class="also-shorts"><input type="checkbox" id="introTitle" /><span>인트로 타이틀 카드 <small>(아래 ‘영상 제목’ 표시)</small></span></label>
       </div>
 
       <div class="field">

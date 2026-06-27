@@ -16,8 +16,8 @@ from .providers import get_image_provider
 from .providers.placeholder_provider import _font, _wrap
 
 
-def group_only(scenes, style=""):
-    return sections_mod.group(scenes, style)
+def group_only(scenes, style="", gap=1.6):
+    return sections_mod.group(scenes, style, gap=gap)
 
 
 def generate_candidates(prompt, out_dir, count=4, aspect="16:9", label="",

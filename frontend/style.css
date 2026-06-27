@@ -1062,3 +1062,30 @@ input[type="color"] {
     flex-direction: column;
   }
 }
+
+/* 정렬 신뢰도 낮음 / 긴 줄 경고 */
+.line-flag {
+  margin-left: 4px;
+  color: var(--amber);
+  cursor: help;
+  font-size: 12px;
+}
+.line.flagged .line-number {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+/* 구간 분할 간격 입력 */
+.gap-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.gap-field input {
+  width: 84px;
+  flex: none;
+}

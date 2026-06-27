@@ -29,6 +29,14 @@ PRESETS = {
 DEFAULT_PRESET = "ballad"
 
 
+def _safe_font(font):
+    """사용자가 고른 폰트명을 ASS Style 라인(콤마 구분)에 안전하게 — 콤마·중괄호·개행 제거."""
+    f = (font or "Malgun Gothic")
+    for ch in (",", "{", "}", "\n", "\r"):
+        f = f.replace(ch, " ")
+    return f.strip() or "Malgun Gothic"
+
+
 def _ass_color(hex_rgb, alpha="00"):
     h = (hex_rgb or "FFFFFF").lstrip("#")
     if len(h) != 6:
@@ -86,8 +94,9 @@ _POSITIONS = {
 
 
 def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic",
-              font_size=48, position="bottom"):
+              font_size=48, position="bottom", intro_title="", intro_title_dur=3.0):
     p = PRESETS.get(preset, PRESETS[DEFAULT_PRESET])
+    font = _safe_font(font)
     primary = _ass_color(p["primary"])
     secondary = _ass_color(p["secondary"])
     outline = _ass_color(p["outline"])
@@ -96,12 +105,20 @@ def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic",
     align, mv_override = _POSITIONS.get(position, _POSITIONS["bottom"])
     mv = p["margin_v"] if mv_override is None else mv_override
 
-    # Style K: 노래방(primary=하이라이트). Style P: 정적(전체 기본색).
+    # Style K: 노래방(primary=하이라이트). Style P: 정적(전체 기본색). T: 인트로 타이틀(중앙·대형).
+    title = (intro_title or "").strip().replace("{", "").replace("}", "").replace("\n", " ")
+    title_size = max(size + 28, int(h * 0.075))
+    title_style = (
+        f"Style: T,{font},{title_size},{secondary},{secondary},{outline},&H64000000,1,0,0,0,"
+        f"100,100,0,0,1,{ow + 1},{sh},5,80,80,0,1\n"
+    ) if title else ""
+
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
         f"PlayResX: {w}\nPlayResY: {h}\n"
-        "WrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
+        # WrapStyle 0: 긴 줄을 화면 폭(여백 제외)에 맞춰 자동 줄바꿈 → 가로 오버플로 방지.
+        "WrapStyle: 0\nScaledBorderAndShadow: yes\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
@@ -109,12 +126,19 @@ def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic",
         f"Style: K,{font},{size},{primary},{secondary},{outline},&H64000000,0,0,0,0,"
         f"100,100,0,0,1,{ow},{sh},{align},60,60,{mv},1\n"
         f"Style: P,{font},{size},{secondary},{secondary},{outline},&H64000000,0,0,0,0,"
-        f"100,100,0,0,1,{ow},{sh},{align},60,60,{mv},1\n\n"
+        f"100,100,0,0,1,{ow},{sh},{align},60,60,{mv},1\n"
+        f"{title_style}\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
     events = []
+    if title:
+        dur = max(0.5, float(intro_title_dur or 3.0))
+        fade = min(900, int(dur * 1000 / 3))  # 페이드 인/아웃(ms)
+        events.append(
+            f"Dialogue: 5,{_ts(0)},{_ts(dur)},T,,0,0,0,,{{\\fad({fade},{fade})}}{title}"
+        )
     for sc in scenes:
         text = (sc.get("text") or "").strip()
         if not text:

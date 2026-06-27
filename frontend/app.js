@@ -135,6 +135,7 @@ function normalizeScenes(input) {
     text: sc.text || "",
     section: sc.section || "",
     words: sc.words || [],
+    confidence: Number.isFinite(sc.confidence) ? sc.confidence : null,
     image_prompt: sc.image_prompt || "",
     image_path: sc.image_path || "",
     video_path: sc.video_path || "",
@@ -191,6 +192,20 @@ function renderRows() {
     const number = document.createElement("span");
     number.className = "line-number";
     number.textContent = String(index + 1);
+    // 정렬 신뢰도 낮음 / 긴 줄 경고
+    const flags = [];
+    if (scene.confidence != null && scene.confidence < 0.45)
+      flags.push(`정렬 신뢰도 낮음 (${Math.round(scene.confidence * 100)}%) — 타이밍 확인 권장`);
+    if ((scene.text || "").length > 40)
+      flags.push("긴 줄 — 자막이 자동으로 두 줄 줄바꿈됩니다");
+    if (flags.length) {
+      row.classList.add("flagged");
+      const flag = document.createElement("span");
+      flag.className = "line-flag";
+      flag.textContent = "⚠";
+      flag.title = flags.join(" · ");
+      number.appendChild(flag);
+    }
 
     const start = makeInput("start time-input", fmt(scene.start), "시작 시간");
     const end = makeInput("end time-input", fmt(scene.end), "끝 시간");
@@ -586,11 +601,13 @@ $("renderBtn").addEventListener("click", async () => {
         font_size: Number($("fontSize").value) || 48,
         subtitle_style: $("subtitleStyle").value,
         subtitle_pos: $("subtitlePos").value,
+        font: $("fontSelect").value,
         transition: $("transition").value,
         transition_dur: Number($("transitionDur").value) || 0.8,
         ken_burns: Number($("kenBurns").value) || 0,
         intro_fade: $("introOutro").checked ? 1.0 : 0,
         outro_fade: $("introOutro").checked ? 2.0 : 0,
+        intro_title: $("introTitle").checked ? $("songTitle").value.trim() : "",
         sections: sectionsState
           .filter((s) => s.image_id)
           .map((s) => ({ start: s.start, end: s.end, image_id: s.image_id })),
@@ -725,7 +742,10 @@ async function groupSections() {
     const res = await fetch("/api/images", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scenes, style: $("imgStyle").value, aspect: getAspect() }),
+      body: JSON.stringify({
+        scenes, style: $("imgStyle").value, aspect: getAspect(),
+        gap: Number($("gapThreshold").value) || 1.6,
+      }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -927,6 +947,48 @@ async function autoWritePrompts(silent) {
 }
 $("autoPromptBtn").addEventListener("click", () => autoWritePrompts(false));
 
+// 구간 경계를 음원 박자에 스냅 (librosa 비트 검출). 0.5초 이내 비트로만 당겨 가사와 어긋남 방지.
+async function beatSnap() {
+  if (sectionsState.length < 2) return status("구간이 2개 이상일 때 사용할 수 있습니다.", "err");
+  if (!audioId) return status("먼저 자동 정렬을 완료하세요.", "err");
+  const btn = $("beatSnapBtn");
+  btn.disabled = true;
+  busy("음원 박자를 분석해 구간 경계를 맞추는 중…");
+  try {
+    const res = await fetch("/api/beats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audio_id: audioId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const beats = data.beats || [];
+    if (!beats.length) throw new Error("비트를 찾지 못했습니다.");
+    let moved = 0;
+    for (let i = 1; i < sectionsState.length; i++) {
+      const s = sectionsState[i];
+      const nearest = beats.reduce((a, b) =>
+        Math.abs(b - s.start) < Math.abs(a - s.start) ? b : a, beats[0]);
+      const delta = Math.abs(nearest - s.start);
+      if (delta > 0.02 && delta <= 0.5) { // 0.5초 이내만 스냅(큰 이동 금지)
+        s.start = round2(nearest);
+        sectionsState[i - 1].end = s.start; // 이전 구간 끝도 경계에 맞춤
+        moved++;
+      }
+    }
+    renderSectionCards();
+    updatePreview();
+    status(moved
+      ? `비트에 맞춰 ${moved}개 구간 경계를 조정했습니다.`
+      : "이미 모든 경계가 박자에 가깝습니다.", "ok");
+  } catch (e) {
+    status("비트 맞추기 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("beatSnapBtn").addEventListener("click", beatSnap);
+
 $("sections").addEventListener("change", (e) => {
   const card = e.target.closest(".section-card");
   if (!card) return;
@@ -985,14 +1047,17 @@ function collectState() {
     scenes,
     sections: sectionsState,
     style: $("imgStyle").value,
+    gap: Number($("gapThreshold").value) || 1.6,
     aspect: getAspect(),
     font_size: Number($("fontSize").value) || 48,
     subtitle_style: $("subtitleStyle").value,
     subtitle_pos: $("subtitlePos").value,
+    font: $("fontSelect").value,
     transition: $("transition").value,
     transition_dur: Number($("transitionDur").value) || 0.8,
     ken_burns: Number($("kenBurns").value) || 0,
     intro_outro: $("introOutro").checked,
+    intro_title: $("introTitle").checked,
     song_title: $("songTitle").value,
     bg_color: $("bgColor").value,
     bg_id: bgId,
@@ -1011,13 +1076,16 @@ function applyState(st) {
   $("lyrics").value = st.lyrics || "";
   $("language").value = st.language || "ko";
   $("imgStyle").value = st.style || "";
+  if (st.gap) $("gapThreshold").value = st.gap;
   $("fontSize").value = st.font_size || 48;
   $("subtitleStyle").value = st.subtitle_style || "ballad";
   $("subtitlePos").value = st.subtitle_pos || "bottom";
+  $("fontSelect").value = st.font || "Malgun Gothic";
   $("transition").value = st.transition || "crossfade";
   $("transitionDur").value = st.transition_dur || 0.8;
   $("kenBurns").value = st.ken_burns || 0;
   $("introOutro").checked = st.intro_outro !== false;
+  $("introTitle").checked = !!st.intro_title;
   $("songTitle").value = st.song_title || "";
   $("bgColor").value = st.bg_color || "#101114";
   $("fontSizeVal").textContent = $("fontSize").value;
@@ -1120,6 +1188,8 @@ function renderChapters() {
   if (ga) ga.classList.toggle("hidden", !sectionsState.length);
   const ap = $("autoPromptBtn");
   if (ap) ap.classList.toggle("hidden", !sectionsState.length);
+  const bs = $("beatSnapBtn");
+  if (bs) bs.classList.toggle("hidden", sectionsState.length < 2);
   if (sectionsState.length) {
     box.classList.remove("hidden");
     $("chaptersBox").value = buildChapters();

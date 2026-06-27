@@ -38,7 +38,7 @@ def get_model():
     return _model
 
 
-def _scene(idx, start, end, text, section="", words=None):
+def _scene(idx, start, end, text, section="", words=None, confidence=None):
     return {
         "id": idx,
         "start": round(float(start), 2),
@@ -46,6 +46,7 @@ def _scene(idx, start, end, text, section="", words=None):
         "text": text,
         "section": section,  # [Verse 1] 같은 구간 라벨 (이미지 묶기에 사용)
         "words": words or [],  # 단어별 타이밍 (ASS 노래방 하이라이트에 사용)
+        "confidence": confidence,  # 정렬 신뢰도 0~1 (낮으면 줄 타이밍 의심 → UI 경고)
         # --- 2차(이미지/영상 API)에서 채워질 빈 칸 ---
         "image_prompt": "",
         "image_path": "",
@@ -99,6 +100,7 @@ def align(audio_path: str, lyrics: str, language: str = "ko"):
         else:
             last_section = section
         words = []
+        probs = []
         for w in (getattr(seg, "words", None) or []):
             wt = (getattr(w, "word", "") or "").strip()
             if not wt:
@@ -108,5 +110,26 @@ def align(audio_path: str, lyrics: str, language: str = "ko"):
                 "start": round(float(w.start), 2),
                 "end": round(float(w.end), 2),
             })
-        scenes.append(_scene(len(scenes), seg.start, seg.end, line, section, words))
+            pr = getattr(w, "probability", None)
+            if pr is not None:
+                try:
+                    probs.append(float(pr))
+                except (TypeError, ValueError):
+                    pass
+        conf = _confidence(probs, seg)
+        scenes.append(_scene(len(scenes), seg.start, seg.end, line, section, words, conf))
     return scenes
+
+
+def _confidence(probs, seg):
+    """단어 확률 평균을 0~1 신뢰도로. 단어 확률이 없으면 세그먼트 avg_logprob로 근사."""
+    import math
+    if probs:
+        return round(sum(probs) / len(probs), 3)
+    lp = getattr(seg, "avg_logprob", None)
+    if lp is not None:
+        try:
+            return round(min(1.0, max(0.0, math.exp(float(lp)))), 3)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return None

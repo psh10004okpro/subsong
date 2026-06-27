@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import align as align_mod
+from . import beats as beats_mod
 from . import images as images_mod
 from . import jobs as jobs_mod
 from . import prompts as prompts_mod
@@ -82,6 +83,7 @@ class ImagesReq(BaseModel):
     scenes: list[Scene]
     style: str = ""
     aspect: str = "16:9"
+    gap: float = 1.6  # 라벨 없을 때 이 초 이상 비면 새 구간(자동 그룹핑)
 
 
 class CandidatesReq(BaseModel):
@@ -95,6 +97,10 @@ class CandidatesReq(BaseModel):
 class AutoPromptReq(BaseModel):
     sections: list[dict] = []  # [{label, lines}]
     style: str = ""
+
+
+class BeatsReq(BaseModel):
+    audio_id: str
 
 
 class ThumbReq(BaseModel):
@@ -125,6 +131,7 @@ class RenderReq(BaseModel):
     ken_burns: float = 0.0          # 배경 줌 모션 강도 (0=정지)
     intro_fade: float = 0.0         # 인트로 페이드인(초, 0=없음)
     outro_fade: float = 0.0         # 아웃트로 페이드아웃(초, 0=없음)
+    intro_title: str = ""           # 인트로 타이틀 카드 문구(빈 값=없음)
     sections: list[SectionBg] = []
 
 
@@ -165,7 +172,7 @@ async def api_upload_bg(file: UploadFile = File(...)):
 @app.post("/api/images")
 def api_images(req: ImagesReq):
     """장면 → 구간 묶기 (이미지는 아직 생성하지 않음)."""
-    secs = images_mod.group_only([s.model_dump() for s in req.scenes], req.style)
+    secs = images_mod.group_only([s.model_dump() for s in req.scenes], req.style, gap=req.gap)
     for s in secs:
         s.pop("image_path", None)
         s["image_id"] = ""
@@ -190,6 +197,18 @@ def api_auto_prompts(req: AutoPromptReq):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"프롬프트 생성 실패: {e}")
     return {"prompts": results}
+
+
+@app.post("/api/beats")
+def api_beats(req: BeatsReq):
+    """음원 비트 시각 검출 → 구간 경계를 박자에 스냅하는 데 사용."""
+    path = os.path.join(DATA, req.audio_id)
+    if not os.path.exists(path):
+        raise HTTPException(404, "오디오를 찾을 수 없습니다. 다시 정렬해 주세요.")
+    bts = beats_mod.detect_beats(path)
+    if not bts:
+        raise HTTPException(503, "비트를 검출하지 못했습니다(분석 실패 또는 librosa 미설치).")
+    return {"beats": bts}
 
 
 @app.post("/api/candidates")
@@ -257,6 +276,7 @@ def api_render(req: RenderReq):
                     transition=req.transition, transition_dur=req.transition_dur,
                     ken_burns=req.ken_burns,
                     intro_fade=req.intro_fade, outro_fade=req.outro_fade,
+                    intro_title=req.intro_title,
                     job=job, progress_range=(i / n, (i + 1) / n),
                 )
                 if job.cancelled or out is None:

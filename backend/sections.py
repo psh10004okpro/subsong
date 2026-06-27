@@ -34,10 +34,17 @@ def _section(idx, scenes_in, label, style):
     }
 
 
-def group(scenes, style: str = ""):
+def group(scenes, style: str = "", gap: float = _GAP):
     scenes = [s for s in scenes if (s.get("text") or "").strip()]
     if not scenes:
         return []
+
+    try:
+        gap = float(gap)
+    except (TypeError, ValueError):
+        gap = _GAP
+    if gap <= 0:
+        gap = _GAP
 
     has_labels = any((s.get("section") or "").strip() for s in scenes)
     groups = []
@@ -47,7 +54,7 @@ def group(scenes, style: str = ""):
         if has_labels:
             boundary = (sc.get("section") or "") != (prev.get("section") or "")
         else:
-            boundary = float(sc["start"]) - float(prev["end"]) >= _GAP
+            boundary = float(sc["start"]) - float(prev["end"]) >= gap
         if boundary:
             groups.append(cur)
             cur = [sc]
