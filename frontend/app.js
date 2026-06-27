@@ -169,6 +169,7 @@ async function doAlign() {
     sectionsState = [];
     renderRows();
     renderSectionCards();
+    resetHistory(); // 정렬 결과를 되돌리기 시작점으로
     goStep(2);
     status(`정렬 완료: ${scenes.length}줄. 미리보기로 확인하며 고치세요.`, "ok");
   } catch (e) {
@@ -226,6 +227,7 @@ function renderRows() {
 
   updateCurrentLine();
   updateActionState();
+  recordHistorySoon();
 }
 
 function makeInput(className, value, label) {
@@ -602,6 +604,9 @@ $("renderBtn").addEventListener("click", async () => {
         subtitle_style: $("subtitleStyle").value,
         subtitle_pos: $("subtitlePos").value,
         font: $("fontSelect").value,
+        text_color: $("textColor").value,
+        hi_color: $("hiColor").value,
+        outline_color: $("outlineColor").value,
         transition: $("transition").value,
         transition_dur: Number($("transitionDur").value) || 0.8,
         ken_burns: Number($("kenBurns").value) || 0,
@@ -731,6 +736,7 @@ function renderSectionCards() {
   });
   scheduleAutosave();
   updatePreview();
+  recordHistorySoon();
 }
 
 async function groupSections() {
@@ -1053,6 +1059,9 @@ function collectState() {
     subtitle_style: $("subtitleStyle").value,
     subtitle_pos: $("subtitlePos").value,
     font: $("fontSelect").value,
+    text_color: $("textColor").value,
+    hi_color: $("hiColor").value,
+    outline_color: $("outlineColor").value,
     transition: $("transition").value,
     transition_dur: Number($("transitionDur").value) || 0.8,
     ken_burns: Number($("kenBurns").value) || 0,
@@ -1081,6 +1090,13 @@ function applyState(st) {
   $("subtitleStyle").value = st.subtitle_style || "ballad";
   $("subtitlePos").value = st.subtitle_pos || "bottom";
   $("fontSelect").value = st.font || "Malgun Gothic";
+  if (st.hi_color) { // 저장된 커스텀 색이 있으면 복원, 없으면 프리셋 색
+    $("textColor").value = st.text_color || "#FFFFFF";
+    $("hiColor").value = st.hi_color;
+    $("outlineColor").value = st.outline_color || "#101010";
+  } else {
+    presetColorsToPickers();
+  }
   $("transition").value = st.transition || "crossfade";
   $("transitionDur").value = st.transition_dur || 0.8;
   $("kenBurns").value = st.ken_burns || 0;
@@ -1103,6 +1119,7 @@ function applyState(st) {
   updateLyricStats();
   goStep(scenes.length ? 2 : 1);
   updateActionState();
+  resetHistory(); // 불러온 상태를 되돌리기 시작점으로
 }
 
 async function refreshProjects(selectSlug, notify) {
@@ -1273,17 +1290,40 @@ const PRESET_PREVIEW = {
   citypop: { base: "#FFF4E0", hi: "#7DE0FF", outline: "#201430" },
   simple: { base: "#FFFFFF", hi: "#FFFFFF", outline: "#000000" },
 };
+// 미리보기·최종 자막이 같은 색을 쓰도록, 색은 피커(커스텀) 한 곳에서만 읽는다.
+function currentStyleColors() {
+  return { base: $("textColor").value, hi: $("hiColor").value, outline: $("outlineColor").value };
+}
+function presetColorsToPickers() {
+  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
+  $("textColor").value = p.base;
+  $("hiColor").value = p.hi;
+  $("outlineColor").value = p.outline;
+}
 function updateStylePreview() {
   const el = $("stylePreview");
   if (!el) return;
-  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
-  const o = p.outline;
+  const c = currentStyleColors();
+  const o = c.outline;
   const sh = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
   el.innerHTML =
-    `<span style="color:${p.hi};text-shadow:${sh}">부르는 단어</span> ` +
-    `<span style="color:${p.base};text-shadow:${sh}">가사 미리보기</span>`;
+    `<span style="color:${c.hi};text-shadow:${sh}">부르는 단어</span> ` +
+    `<span style="color:${c.base};text-shadow:${sh}">가사 미리보기</span>`;
 }
-$("subtitleStyle").addEventListener("change", updateStylePreview);
+// 프리셋을 바꾸면 색 피커를 그 프리셋 색으로 채운다(거기서 취향대로 미세조정).
+$("subtitleStyle").addEventListener("change", () => {
+  presetColorsToPickers();
+  updateStylePreview();
+  updatePreview();
+});
+["textColor", "hiColor", "outlineColor"].forEach((id) =>
+  $(id).addEventListener("input", () => { updateStylePreview(); updatePreview(); })
+);
+$("resetColors").addEventListener("click", () => {
+  presetColorsToPickers();
+  updateStylePreview();
+  updatePreview();
+});
 
 // ---- 자동저장 (브라우저 localStorage · 디바운스 1.5s) ----
 const AUTOSAVE_KEY = "subsong_autosave";
@@ -1306,6 +1346,93 @@ function scheduleAutosave() {
 }
 document.addEventListener("input", scheduleAutosave, true);
 document.addEventListener("change", scheduleAutosave, true);
+
+// ---- 되돌리기 / 다시하기 (가사 타이밍·구간 편집 스냅샷) ----
+let undoStack = [];
+let redoStack = [];
+let lastHistory = null;
+let restoring = false;
+let historyTimer = null;
+function histSnapshot() {
+  return JSON.stringify({ scenes, sections: sectionsState });
+}
+function updateUndoButtons() {
+  if ($("undoBtn")) $("undoBtn").disabled = !undoStack.length;
+  if ($("redoBtn")) $("redoBtn").disabled = !redoStack.length;
+}
+function recordHistory() {
+  if (restoring) return;
+  const cur = histSnapshot();
+  if (cur === lastHistory) return;
+  if (lastHistory !== null) {
+    undoStack.push(lastHistory);
+    if (undoStack.length > 60) undoStack.shift();
+    redoStack = [];
+  }
+  lastHistory = cur;
+  updateUndoButtons();
+}
+function recordHistorySoon() {
+  if (restoring) return;
+  if (historyTimer) clearTimeout(historyTimer);
+  historyTimer = setTimeout(recordHistory, 350);
+}
+function resetHistory() {
+  undoStack = [];
+  redoStack = [];
+  lastHistory = histSnapshot();
+  updateUndoButtons();
+}
+function restoreHistory(str) {
+  restoring = true;
+  try {
+    const o = JSON.parse(str);
+    scenes = normalizeScenes(o.scenes || []);
+    sectionsState = o.sections || [];
+    renderRows();
+    renderSectionCards();
+    renderAnchor();
+    renderChapters();
+    updatePreview();
+    updateActionState();
+  } finally {
+    restoring = false;
+  }
+}
+function undo() {
+  if (historyTimer) { clearTimeout(historyTimer); historyTimer = null; recordHistory(); }
+  if (!undoStack.length) return status("되돌릴 작업이 없습니다.", "ok");
+  redoStack.push(lastHistory);
+  lastHistory = undoStack.pop();
+  restoreHistory(lastHistory);
+  updateUndoButtons();
+  status("되돌렸습니다.", "ok");
+}
+function redo() {
+  if (!redoStack.length) return status("다시 실행할 작업이 없습니다.", "ok");
+  undoStack.push(lastHistory);
+  lastHistory = redoStack.pop();
+  restoreHistory(lastHistory);
+  updateUndoButtons();
+  status("다시 실행했습니다.", "ok");
+}
+$("undoBtn").addEventListener("click", undo);
+$("redoBtn").addEventListener("click", redo);
+document.addEventListener("change", recordHistorySoon, true);
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const k = (e.key || "").toLowerCase();
+  const isZ = k === "z" || k === "ㅈ";
+  const isY = k === "y" || k === "ㅛ";
+  if (isZ && !e.shiftKey) {
+    if (document.activeElement && document.activeElement.id === "lyrics") return; // 가사 입력칸은 네이티브 undo
+    e.preventDefault();
+    undo();
+  } else if ((isZ && e.shiftKey) || isY) {
+    e.preventDefault();
+    redo();
+  }
+});
 
 function offerRestore() {
   let saved = null;
@@ -1332,12 +1459,11 @@ function setPreviewAspect() {
   $("preview").style.aspectRatio = a === "9:16" ? "9 / 16" : a === "1:1" ? "1 / 1" : "16 / 9";
 }
 function applyPreviewStyle() {
-  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
   const ov = $("previewSub");
   const fs = Number($("fontSize").value) || 48;
   const pw = $("preview").clientWidth || 640;
   ov.style.fontSize = Math.max(11, (fs * pw) / 1920) + "px";
-  const o = p.outline;
+  const o = currentStyleColors().outline;
   ov.style.textShadow = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
   const pos = $("subtitlePos").value;
   if (pos === "middle") {
@@ -1354,13 +1480,25 @@ function escapeHtml(s) {
   );
 }
 function karaokeHTML(sc, t) {
-  const p = PRESET_PREVIEW[$("subtitleStyle").value] || PRESET_PREVIEW.ballad;
+  const c = currentStyleColors();
   const words = sc.words && sc.words.length ? sc.words : null;
   if (!words || $("subtitleStyle").value === "simple") {
-    return `<span style="color:${p.base}">${escapeHtml(sc.text)}</span>`;
+    return `<span style="color:${c.base}">${escapeHtml(sc.text)}</span>`;
   }
+  // 최종 ASS \kf와 동일하게: 부르는 단어를 '왼→오'로 점점 채운다(단어 길이=다음 단어 시작까지).
   return words
-    .map((w) => `<span style="color:${t >= Number(w.start) ? p.hi : p.base}">${escapeHtml(w.w)}</span>`)
+    .map((w, i) => {
+      const ws = Number(w.start);
+      const we = i + 1 < words.length
+        ? Number(words[i + 1].start)
+        : (w.end != null ? Number(w.end) : Number(sc.end));
+      const word = escapeHtml(w.w);
+      if (t >= we) return `<span style="color:${c.hi}">${word}</span>`;
+      if (t < ws) return `<span style="color:${c.base}">${word}</span>`;
+      const f = Math.max(0, Math.min(1, (t - ws) / Math.max(0.05, we - ws))) * 100;
+      return `<span style="background:linear-gradient(90deg,${c.hi} ${f}%,${c.base} ${f}%);` +
+        `-webkit-background-clip:text;background-clip:text;color:transparent">${word}</span>`;
+    })
     .join(" ");
 }
 function updatePreview() {

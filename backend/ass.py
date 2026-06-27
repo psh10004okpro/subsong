@@ -94,12 +94,14 @@ _POSITIONS = {
 
 
 def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic",
-              font_size=48, position="bottom", intro_title="", intro_title_dur=3.0):
+              font_size=48, position="bottom", intro_title="", intro_title_dur=3.0,
+              text_color="", hi_color="", outline_color=""):
     p = PRESETS.get(preset, PRESETS[DEFAULT_PRESET])
     font = _safe_font(font)
-    primary = _ass_color(p["primary"])
-    secondary = _ass_color(p["secondary"])
-    outline = _ass_color(p["outline"])
+    # 사용자가 직접 고른 색이 있으면 프리셋 위에 덮어쓴다(취향 커스텀).
+    primary = _ass_color(hi_color or p["primary"])      # 부르는(강조) 단어
+    secondary = _ass_color(text_color or p["secondary"])  # 기본 글자색
+    outline = _ass_color(outline_color or p["outline"])
     size = int(font_size or 48)
     ow, sh = p["outline_w"], p["shadow"]
     align, mv_override = _POSITIONS.get(position, _POSITIONS["bottom"])

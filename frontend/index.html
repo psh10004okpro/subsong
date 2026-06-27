@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>subsong · AI 뮤직비디오 스튜디오</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260627" />
 </head>
 <body>
   <header class="app-header">
@@ -16,6 +16,8 @@
       </div>
     </div>
     <div class="header-right">
+      <button type="button" id="undoBtn" class="mini-btn" title="되돌리기 (Ctrl+Z)" disabled>↶ 되돌리기</button>
+      <button type="button" id="redoBtn" class="mini-btn" title="다시하기 (Ctrl+Shift+Z)" disabled>↷</button>
       <span id="saveState" class="save-state"><span class="dot"></span>자동 저장됨</span>
       <select id="projectSelect" aria-label="저장된 프로젝트">
         <option value="">저장된 프로젝트…</option>
@@ -225,6 +227,12 @@
           <option value="simple">심플 · 하이라이트 없음</option>
         </select>
         <div id="stylePreview" class="style-preview"><span>가사 미리보기</span></div>
+        <div class="color-row">
+          <label class="color-pick">글자색<input type="color" id="textColor" value="#FFFFFF" /></label>
+          <label class="color-pick">강조색<input type="color" id="hiColor" value="#FFE08A" /></label>
+          <label class="color-pick">외곽선<input type="color" id="outlineColor" value="#101010" /></label>
+          <button type="button" id="resetColors" class="link-btn">프리셋 색으로</button>
+        </div>
       </div>
 
       <div class="field">
@@ -307,6 +315,6 @@
   </main>
 
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
-  <script src="app.js"></script>
+  <script src="app.js?v=20260627"></script>
 </body>
 </html>

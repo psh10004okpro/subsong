@@ -205,6 +205,9 @@ def render(
     outro_fade: float = 0.0,       # 0=없음, 아웃트로 페이드아웃(초)
     intro_title: str = "",         # 인트로 타이틀 카드 문구(빈 값=없음)
     intro_title_dur: float = 3.0,  # 타이틀 카드 표시 길이(초)
+    text_color: str = "",          # 자막 기본 글자색(빈 값=프리셋)
+    hi_color: str = "",            # 강조(부르는 단어) 색
+    outline_color: str = "",       # 외곽선 색
     job=None,
     progress_range=(0.0, 1.0),
 ) -> str:
@@ -214,7 +217,9 @@ def render(
     # ASS 문자열을 먼저 만든다(여기서 실패하면 파일을 만들지 않음 → 누수 방지).
     ass_text = ass_mod.build_ass(scenes, w, h, subtitle_style, font=font,
                                  font_size=font_size, position=subtitle_pos,
-                                 intro_title=intro_title, intro_title_dur=intro_title_dur)
+                                 intro_title=intro_title, intro_title_dur=intro_title_dur,
+                                 text_color=text_color, hi_color=hi_color,
+                                 outline_color=outline_color)
     ass_name = f"{uuid.uuid4().hex}.ass"
     out_name = f"{uuid.uuid4().hex}.mp4"
     ass_path = os.path.join(out_dir, ass_name)
