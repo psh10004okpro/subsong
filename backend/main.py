@@ -132,6 +132,7 @@ class RenderReq(BaseModel):
     intro_fade: float = 0.0         # 인트로 페이드인(초, 0=없음)
     outro_fade: float = 0.0         # 아웃트로 페이드아웃(초, 0=없음)
     intro_title: str = ""           # 인트로 타이틀 카드 문구(빈 값=없음)
+    intro_title_dur: float = 3.0    # 타이틀 카드 표시 길이(초)
     text_color: str = ""            # 자막 기본 글자색(빈 값=프리셋)
     hi_color: str = ""              # 강조(부르는 단어) 색
     outline_color: str = ""         # 외곽선 색
@@ -279,7 +280,7 @@ def api_render(req: RenderReq):
                     transition=req.transition, transition_dur=req.transition_dur,
                     ken_burns=req.ken_burns,
                     intro_fade=req.intro_fade, outro_fade=req.outro_fade,
-                    intro_title=req.intro_title,
+                    intro_title=req.intro_title, intro_title_dur=req.intro_title_dur,
                     text_color=req.text_color, hi_color=req.hi_color,
                     outline_color=req.outline_color,
                     job=job, progress_range=(i / n, (i + 1) / n),

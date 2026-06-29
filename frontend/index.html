@@ -23,15 +23,16 @@
         <option value="">저장된 프로젝트…</option>
       </select>
       <button type="button" id="loadProjectBtn" class="mini-btn">불러오기</button>
+      <button type="button" id="deleteProjectBtn" class="mini-btn">삭제</button>
       <button type="button" id="saveProjectBtn" class="mini-btn">저장</button>
     </div>
   </header>
 
   <ol class="steps" id="stepTabs" aria-label="작업 단계">
-    <li data-step="1" class="active"><span>1</span>소스</li>
-    <li data-step="2"><span>2</span>싱크</li>
-    <li data-step="3"><span>3</span>배경</li>
-    <li data-step="4"><span>4</span>출력</li>
+    <li data-step="1" class="active" tabindex="0" role="button" aria-current="step"><span>1</span>소스</li>
+    <li data-step="2" tabindex="0" role="button"><span>2</span>싱크</li>
+    <li data-step="3" tabindex="0" role="button"><span>3</span>배경</li>
+    <li data-step="4" tabindex="0" role="button"><span>4</span>출력</li>
   </ol>
 
   <div id="restoreBar" class="restore-bar hidden">
@@ -47,6 +48,9 @@
     <section class="stage hidden" id="stage">
       <div class="preview-wrap">
         <div id="preview" class="preview">
+          <div id="previewBg" class="preview-bg"></div>
+          <video id="previewVideo" class="preview-video" muted loop playsinline></video>
+          <div id="previewTitle" class="preview-title"></div>
           <div id="previewSub" class="preview-sub"></div>
           <span id="previewMeta" class="preview-meta"></span>
         </div>
@@ -161,8 +165,12 @@
           </label>
           <button type="button" id="clearAnchorBtn" class="mini-btn">해제</button>
         </div>
+        <div id="genAllProgress" class="render-progress hidden">
+          <div class="bar"><div id="genAllBar" class="bar-fill"></div></div>
+          <div class="render-progress-row"><span id="genAllPct">0%</span></div>
+        </div>
         <div id="sections" class="sections"></div>
-        <span class="muted">구간별로 ‘AI 4장’ 또는 ‘업로드’로 배경을 정합니다. 고른 이미지가 미리보기·영상 배경이 됩니다.</span>
+        <span class="muted">구간별로 ‘AI 4장’ 또는 ‘업로드’(이미지·영상)로 배경을 정합니다. 구간마다 이미지·영상을 섞을 수 있습니다.</span>
       </div>
     </section>
 
@@ -254,8 +262,14 @@
           <span class="field-label">배경 줌 · Ken Burns <span id="kenBurnsVal" class="muted">없음</span></span>
           <input type="range" id="kenBurns" min="0" max="0.12" step="0.02" value="0" />
         </label>
-        <label class="also-shorts"><input type="checkbox" id="introOutro" checked /><span>처음·끝 페이드 인/아웃</span></label>
-        <label class="also-shorts"><input type="checkbox" id="introTitle" /><span>인트로 타이틀 카드 <small>(아래 ‘영상 제목’ 표시)</small></span></label>
+        <div class="opt-row">
+          <label class="also-shorts"><input type="checkbox" id="introOutro" checked /><span>처음·끝 페이드</span></label>
+          <span class="inline-lens">인 <input type="number" id="introFade" min="0" max="3" step="0.5" value="1" />s · 아웃 <input type="number" id="outroFade" min="0" max="5" step="0.5" value="2" />s</span>
+        </div>
+        <div class="opt-row">
+          <label class="also-shorts"><input type="checkbox" id="introTitle" /><span>인트로 타이틀 카드 <small>(‘영상 제목’ 표시)</small></span></label>
+          <span class="inline-lens">길이 <input type="number" id="introTitleDur" min="1" max="8" step="0.5" value="3" />s</span>
+        </div>
       </div>
 
       <div class="field">
@@ -296,13 +310,13 @@
           <span class="field-label">설명란 챕터</span>
           <button type="button" id="copyChaptersBtn" class="link-btn">복사</button>
         </div>
-        <textarea id="chaptersBox" rows="4" readonly></textarea>
+        <textarea id="chaptersBox" rows="4"></textarea>
         <div id="metaWrap" class="hidden">
           <div class="label-row">
             <span class="field-label">제목 · 설명 · 태그</span>
             <button type="button" id="copyMetaBtn" class="link-btn">복사</button>
           </div>
-          <textarea id="metaBox" rows="9" readonly></textarea>
+          <textarea id="metaBox" rows="9"></textarea>
         </div>
         <span class="muted">챕터·설명을 유튜브 업로드 시 붙여넣으세요. AI 음악 크레딧이 자동 포함됩니다.</span>
       </div>

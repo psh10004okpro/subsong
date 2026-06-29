@@ -134,18 +134,21 @@ def build_ass(scenes, w, h, preset=DEFAULT_PRESET, font="Malgun Gothic",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
 
+    title_dur = max(0.5, float(intro_title_dur or 3.0)) if title else 0.0
     events = []
     if title:
-        dur = max(0.5, float(intro_title_dur or 3.0))
-        fade = min(900, int(dur * 1000 / 3))  # 페이드 인/아웃(ms)
+        fade = min(900, int(title_dur * 1000 / 3))  # 페이드 인/아웃(ms)
         events.append(
-            f"Dialogue: 5,{_ts(0)},{_ts(dur)},T,,0,0,0,,{{\\fad({fade},{fade})}}{title}"
+            f"Dialogue: 5,{_ts(0)},{_ts(title_dur)},T,,0,0,0,,{{\\fad({fade},{fade})}}{title}"
         )
     for sc in scenes:
         text = (sc.get("text") or "").strip()
         if not text:
             continue
         start = float(sc["start"])
+        # 인트로 타이틀이 떠 있는 동안은 일반 자막을 내지 않는다(겹침 방지).
+        if title and start < title_dur:
+            continue
         end = float(sc["end"])
         if end <= start:
             end = start + 0.5

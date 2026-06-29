@@ -105,6 +105,8 @@ function goStep(n) {
     const s = Number(li.dataset.step);
     li.classList.toggle("active", s === currentStep);
     li.classList.toggle("done", s < currentStep);
+    if (s === currentStep) li.setAttribute("aria-current", "step");
+    else li.removeAttribute("aria-current");
   });
   document.querySelectorAll(".step").forEach((p) => {
     p.classList.remove("hidden");
@@ -150,6 +152,7 @@ async function doAlign() {
 
   isAligning = true;
   updateActionState();
+  $("alignBtn").textContent = "정렬 중…";
   busy("자동 정렬 중입니다. 첫 실행이면 모델 다운로드 때문에 오래 걸릴 수 있습니다.");
 
   const fd = new FormData();
@@ -176,6 +179,7 @@ async function doAlign() {
     status("정렬 실패: " + e.message, "err");
   } finally {
     isAligning = false;
+    $("alignBtn").textContent = "자동 정렬 시작";
     updateActionState();
   }
 }
@@ -351,10 +355,15 @@ $("lines").addEventListener("click", (e) => {
     scene.end = round2(audio.currentTime || 0);
     row.querySelector(".end").value = fmt(scene.end);
   } else if (button.dataset.act === "play") {
-    audio.currentTime = scene.start;
-    stopAt = scene.end;
-    audio.play().catch((err) =>
-      status("이 줄을 재생할 수 없습니다(오디오 미로드일 수 있음): " + err.message, "err"));
+    if (!audio.paused) { // 재생 중이면 정지(토글)
+      audio.pause();
+      stopAt = null;
+    } else {
+      audio.currentTime = scene.start;
+      stopAt = scene.end;
+      audio.play().catch((err) =>
+        status("이 줄을 재생할 수 없습니다(오디오 미로드일 수 있음): " + err.message, "err"));
+    }
   } else if (button.dataset.act === "del") {
     scenes.splice(i, 1);
     syncSectionTimes();
@@ -419,12 +428,30 @@ $("bgFile").addEventListener("change", async (e) => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     bgId = data.bg_id;
-    $("bgName").textContent = file.name;
+    bgName = file.name;
+    updateBgNote();
     status("배경 업로드 완료", "ok");
   } catch (err) {
     status("배경 업로드 실패: " + err.message, "err");
   }
 });
+
+// 공통 배경은 '구간 배경이 하나도 없을 때만' 적용됨 — 상태에 맞게 안내(조용한 무시 방지)
+let bgName = "";
+function updateBgNote() {
+  const el = $("bgName");
+  if (!el) return;
+  const hasSecImg = sectionsState.some((s) => s.image_id);
+  if (bgId) {
+    el.textContent = hasSecImg
+      ? `⚠ ${bgName || "공통 배경"} — 구간 배경이 있어 이 공통 배경은 사용되지 않습니다.`
+      : `${bgName || "업로드된 배경"} 적용됨.`;
+  } else {
+    el.textContent = hasSecImg
+      ? "구간 배경을 사용합니다. (공통 배경은 구간 이미지가 하나도 없을 때만 적용)"
+      : "선택하지 않으면 구간 이미지 또는 배경색을 씁니다.";
+  }
+}
 
 $("srtBtn").addEventListener("click", async () => {
   if (!scenes.length) return status("먼저 정렬을 완료하세요.", "err");
@@ -610,9 +637,10 @@ $("renderBtn").addEventListener("click", async () => {
         transition: $("transition").value,
         transition_dur: Number($("transitionDur").value) || 0.8,
         ken_burns: Number($("kenBurns").value) || 0,
-        intro_fade: $("introOutro").checked ? 1.0 : 0,
-        outro_fade: $("introOutro").checked ? 2.0 : 0,
+        intro_fade: $("introOutro").checked ? (Number($("introFade").value) || 0) : 0,
+        outro_fade: $("introOutro").checked ? (Number($("outroFade").value) || 0) : 0,
         intro_title: $("introTitle").checked ? $("songTitle").value.trim() : "",
+        intro_title_dur: Number($("introTitleDur").value) || 3.0,
         sections: sectionsState
           .filter((s) => s.image_id)
           .map((s) => ({ start: s.start, end: s.end, image_id: s.image_id })),
@@ -643,17 +671,41 @@ window.addEventListener("beforeunload", (e) => {
 // ---- 2차: 구간별 배경 이미지 (후보 N장 생성 → 1장 선택) ----
 const CANDIDATE_COUNT = 4;
 
+function isVideoUrl(u) {
+  return /\.(mp4|mov|webm|mkv|m4v)(\?|$)/i.test(u || "");
+}
+
 function renderSectionCards() {
   const box = $("sections");
   box.innerHTML = "";
+  if (!sectionsState.length) {
+    const empty = document.createElement("div");
+    empty.className = "sections-empty";
+    empty.textContent = scenes.length
+      ? "‘구간 나누기’를 눌러 시작하세요. 구간마다 AI 배경을 만들거나 이미지를 올립니다."
+      : "먼저 1단계에서 자동 정렬을 완료하세요.";
+    box.appendChild(empty);
+    recordHistorySoon();
+    return;
+  }
   sectionsState.forEach((s, i) => {
     const card = document.createElement("div");
-    card.className = "section-card";
+    card.className = "section-card" + (s._generating ? " loading" : "");
     card.dataset.i = i;
 
     const thumb = document.createElement("div");
     thumb.className = "section-thumb";
-    if (s.image_url) thumb.style.backgroundImage = `url('${s.image_url}?t=${Date.now()}')`;
+    if (s.image_url) {
+      if (isVideoUrl(s.image_url)) {
+        thumb.classList.add("is-video");
+        const vb = document.createElement("span");
+        vb.className = "video-badge";
+        vb.textContent = "🎬 영상";
+        thumb.appendChild(vb);
+      } else {
+        thumb.style.backgroundImage = `url('${s.image_url}?t=${Date.now()}')`;
+      }
+    }
 
     const head = document.createElement("div");
     head.className = "section-head";
@@ -691,7 +743,7 @@ function renderSectionCards() {
     up.type = "button";
     up.className = "mini-btn upload";
     up.textContent = "업로드";
-    up.title = "내 이미지를 이 구간 배경으로";
+    up.title = "내 이미지/영상을 이 구간 배경으로";
     const setRef = document.createElement("button");
     setRef.type = "button";
     setRef.className = "mini-btn anchor-set";
@@ -699,7 +751,7 @@ function renderSectionCards() {
     setRef.title = "이 구간의 선택 이미지를 일관성 참조로 지정";
     const file = document.createElement("input");
     file.type = "file";
-    file.accept = "image/*";
+    file.accept = "image/*,video/*";
     file.className = "sec-file";
     file.hidden = true;
     rowEl.append(input, gen, up, setRef, file);
@@ -718,8 +770,16 @@ function renderSectionCards() {
         pick.dataset.imageId = c.image_id;
         pick.dataset.imageUrl = c.image_url;
         pick.dataset.hasFace = c.has_face ? "1" : "";
-        pick.style.backgroundImage = `url('${c.image_url}')`;
-        pick.setAttribute("aria-label", "이 이미지 선택");
+        if (isVideoUrl(c.image_url)) {
+          pick.classList.add("is-video");
+          const vb = document.createElement("span");
+          vb.className = "video-badge";
+          vb.textContent = "🎬";
+          pick.appendChild(vb);
+        } else {
+          pick.style.backgroundImage = `url('${c.image_url}')`;
+        }
+        pick.setAttribute("aria-label", "이 배경 선택");
         if (c.has_face) {
           const badge = document.createElement("span");
           badge.className = "face-badge";
@@ -736,6 +796,7 @@ function renderSectionCards() {
   });
   scheduleAutosave();
   updatePreview();
+  updateBgNote();
   recordHistorySoon();
 }
 
@@ -775,7 +836,8 @@ async function groupSections() {
 }
 
 async function genCandidates(card, s, genBtn) {
-  genBtn.disabled = true;
+  s._generating = true;
+  renderSectionCards(); // 카드에 'AI 생성 중…' 오버레이 표시
   busy(`${s.label} 배경 후보 ${CANDIDATE_COUNT}장 생성 중입니다.`);
   try {
     const res = await fetch("/api/candidates", {
@@ -799,13 +861,14 @@ async function genCandidates(card, s, genBtn) {
       s.has_face = !!c0.has_face;
       if (!anchor) setAnchor(s);
     }
-    renderSectionCards();
     const refNote = useRef && anchor ? " (참조 적용)" : "";
     status(`${s.label} 후보 ${s.candidates.length}장 생성 완료${refNote}. 1장을 클릭해 선택하세요.`, "ok");
   } catch (err) {
     status("이미지 생성 실패: " + err.message, "err");
   } finally {
-    genBtn.disabled = false;
+    s._generating = false;
+    renderSectionCards();
+    renderAnchor();
   }
 }
 
@@ -848,15 +911,23 @@ $("clearAnchorBtn").addEventListener("click", () => {
 
 $("genImagesBtn").addEventListener("click", groupSections);
 
+let genAllAborted = false;
 async function genAllCandidates() {
   if (!sectionsState.length) return status("먼저 구간을 나누세요.", "err");
   const btn = $("genAllBtn");
-  btn.disabled = true;
+  genAllAborted = false;
+  btn.textContent = "중지";
+  btn.dataset.mode = "abort"; // 생성 중엔 같은 버튼이 '중지'로
   $("genImagesBtn").disabled = true;
+  $("genAllProgress").classList.remove("hidden");
+  setGenAllProgress(0);
   let ok = 0;
   try {
     for (let i = 0; i < sectionsState.length; i++) {
+      if (genAllAborted) break;
       const s = sectionsState[i];
+      s._generating = true;
+      renderSectionCards();
       busy(`전체 배경 생성 중… ${i + 1}/${sectionsState.length} · ${s.label}`);
       try {
         const res = await fetch("/api/candidates", {
@@ -883,12 +954,15 @@ async function genAllCandidates() {
       } catch (e) {
         /* 개별 구간 실패는 건너뜀(아래 집계에 반영) */
       }
+      s._generating = false;
+      setGenAllProgress((i + 1) / sectionsState.length);
       renderSectionCards(); // 각 구간 완료 즉시 표시
       renderAnchor();
     }
-    // 실패를 성공처럼 보이지 않도록 실제 결과를 반영해 알린다.
     const total = sectionsState.length;
-    if (ok === 0) {
+    if (genAllAborted) {
+      status(`전체 생성을 중지했습니다. (${ok}/${total} 구간 완료)`, "ok");
+    } else if (ok === 0) {
       status("배경을 한 장도 생성하지 못했습니다. 프롬프트·네트워크를 확인하고 다시 시도하세요.", "err");
     } else if (ok < total) {
       status(`${ok}/${total} 구간만 생성됐습니다. 실패한 구간은 ‘AI ${CANDIDATE_COUNT}장’으로 다시 시도하세요.`, "err");
@@ -898,11 +972,25 @@ async function genAllCandidates() {
   } catch (e) {
     status("전체 배경 생성 중 오류: " + e.message, "err");
   } finally {
-    btn.disabled = false;
+    btn.textContent = "전체 생성";
+    btn.dataset.mode = "";
     $("genImagesBtn").disabled = false;
+    $("genAllProgress").classList.add("hidden");
   }
 }
-$("genAllBtn").addEventListener("click", genAllCandidates);
+function setGenAllProgress(frac) {
+  const pct = Math.round((frac || 0) * 100);
+  $("genAllBar").style.width = pct + "%";
+  $("genAllPct").textContent = pct + "%";
+}
+$("genAllBtn").addEventListener("click", () => {
+  if ($("genAllBtn").dataset.mode === "abort") {
+    genAllAborted = true;
+    busy("중지하는 중… 현재 구간까지 마치고 멈춥니다.");
+    return;
+  }
+  genAllCandidates();
+});
 
 // 가사 → AI 이미지 프롬프트 자동작성 (마브 어댑터). 가사는 그대로, 배경 설명만 생성.
 async function autoWritePrompts(silent) {
@@ -1066,10 +1154,15 @@ function collectState() {
     transition_dur: Number($("transitionDur").value) || 0.8,
     ken_burns: Number($("kenBurns").value) || 0,
     intro_outro: $("introOutro").checked,
+    intro_fade: Number($("introFade").value) || 0,
+    outro_fade: Number($("outroFade").value) || 0,
     intro_title: $("introTitle").checked,
+    intro_title_dur: Number($("introTitleDur").value) || 3,
+    also_shorts: $("alsoShorts").checked,
     song_title: $("songTitle").value,
     bg_color: $("bgColor").value,
     bg_id: bgId,
+    bg_name: bgName,
     anchor,
     use_ref: useRef,
   };
@@ -1080,6 +1173,7 @@ function applyState(st) {
   scenes = normalizeScenes(st.scenes || []);
   sectionsState = st.sections || [];
   bgId = st.bg_id || null;
+  bgName = st.bg_name || (bgId ? "업로드된 배경" : "");
   anchor = st.anchor || null;
   useRef = st.use_ref !== false;
   $("lyrics").value = st.lyrics || "";
@@ -1101,7 +1195,11 @@ function applyState(st) {
   $("transitionDur").value = st.transition_dur || 0.8;
   $("kenBurns").value = st.ken_burns || 0;
   $("introOutro").checked = st.intro_outro !== false;
+  if (st.intro_fade != null) $("introFade").value = st.intro_fade;
+  if (st.outro_fade != null) $("outroFade").value = st.outro_fade;
   $("introTitle").checked = !!st.intro_title;
+  if (st.intro_title_dur) $("introTitleDur").value = st.intro_title_dur;
+  $("alsoShorts").checked = !!st.also_shorts;
   $("songTitle").value = st.song_title || "";
   $("bgColor").value = st.bg_color || "#101114";
   $("fontSizeVal").textContent = $("fontSize").value;
@@ -1176,8 +1274,25 @@ async function loadProject() {
   }
 }
 
+async function deleteProject() {
+  const sel = $("projectSelect");
+  const slug = sel.value;
+  if (!slug) return status("삭제할 프로젝트를 선택하세요.", "err");
+  const name = (sel.selectedOptions[0] && sel.selectedOptions[0].textContent) || slug;
+  if (!confirm(`'${name}' 프로젝트를 삭제할까요? 되돌릴 수 없습니다.`)) return;
+  try {
+    const res = await fetch("/api/projects/" + encodeURIComponent(slug), { method: "DELETE" });
+    if (!res.ok) throw new Error(res.statusText);
+    await refreshProjects(null, true);
+    status("프로젝트를 삭제했습니다.", "ok");
+  } catch (e) {
+    status("삭제 실패: " + e.message, "err");
+  }
+}
+
 $("saveProjectBtn").addEventListener("click", saveProject);
 $("loadProjectBtn").addEventListener("click", loadProject);
+$("deleteProjectBtn").addEventListener("click", deleteProject);
 
 // ---- YouTube 설명란 챕터 (구간 타임스탬프 재활용) ----
 function fmtClock(t) {
@@ -1216,15 +1331,26 @@ function renderChapters() {
   }
 }
 
-$("copyChaptersBtn").addEventListener("click", async () => {
+function flashCopied(btn) {
+  if (!btn || btn._copyTimer) return;
+  const orig = btn.textContent;
+  btn.textContent = "복사됨 ✓";
+  btn._copyTimer = setTimeout(() => {
+    btn.textContent = orig;
+    btn._copyTimer = null;
+  }, 1400);
+}
+
+$("copyChaptersBtn").addEventListener("click", async (e) => {
   const txt = $("chaptersBox").value;
   if (!txt) return status("먼저 구간을 나누세요.", "err");
   try {
     await navigator.clipboard.writeText(txt);
-  } catch (e) {
+  } catch (err) {
     $("chaptersBox").select();
     document.execCommand("copy");
   }
+  flashCopied(e.currentTarget);
   status("챕터를 복사했습니다. 유튜브 설명란에 붙여넣으세요.", "ok");
 });
 
@@ -1232,7 +1358,8 @@ $("copyChaptersBtn").addEventListener("click", async () => {
 $("thumbBtn").addEventListener("click", async () => {
   const title = $("songTitle").value.trim();
   if (!title) return status("영상 제목을 입력하세요.", "err");
-  const bg = (sectionsState.find((s) => s.image_id) || {}).image_id || "";
+  // 썸네일 배경은 이미지 구간에서만(영상 파일은 Image.open 불가)
+  const bg = (sectionsState.find((s) => s.image_id && !isVideoUrl(s.image_url)) || {}).image_id || "";
   busy("썸네일 생성 중…");
   try {
     const res = await fetch("/api/thumbnail", {
@@ -1271,15 +1398,16 @@ $("metaBtn").addEventListener("click", () => {
   $("metaWrap").classList.remove("hidden");
   status("메타데이터 생성 완료. 복사해 업로드 시 붙여넣으세요.", "ok");
 });
-$("copyMetaBtn").addEventListener("click", async () => {
+$("copyMetaBtn").addEventListener("click", async (e) => {
   const t = $("metaBox").value;
   if (!t) return;
   try {
     await navigator.clipboard.writeText(t);
-  } catch (e) {
+  } catch (err) {
     $("metaBox").select();
     document.execCommand("copy");
   }
+  flashCopied(e.currentTarget);
   status("메타데이터를 복사했습니다.", "ok");
 });
 
@@ -1304,6 +1432,7 @@ function updateStylePreview() {
   const el = $("stylePreview");
   if (!el) return;
   const c = currentStyleColors();
+  el.style.fontFamily = $("fontSelect").value;  // 폰트 미리보기에도 반영
   const o = c.outline;
   const sh = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
   el.innerHTML =
@@ -1463,6 +1592,7 @@ function applyPreviewStyle() {
   const fs = Number($("fontSize").value) || 48;
   const pw = $("preview").clientWidth || 640;
   ov.style.fontSize = Math.max(11, (fs * pw) / 1920) + "px";
+  ov.style.fontFamily = $("fontSelect").value;  // 폰트 선택을 미리보기에도 반영
   const o = currentStyleColors().outline;
   ov.style.textShadow = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
   const pos = $("subtitlePos").value;
@@ -1501,25 +1631,103 @@ function karaokeHTML(sc, t) {
     })
     .join(" ");
 }
+let _lastPreviewSec = null;
+function applyPreviewFx(bg, sec) {
+  // Ken Burns 줌(슬라이더 값만큼) — 자막과 분리된 배경 레이어에만 적용
+  const kb = Number($("kenBurns").value) || 0;
+  if (kb > 0 && bg.style.backgroundImage) {
+    const dur = sec ? Math.max(3, Math.min(14, sec.end - sec.start)) : 8;
+    bg.style.setProperty("--kb-scale", (1 + kb).toFixed(3));
+    bg.style.setProperty("--kb-dur", dur + "s");
+    bg.classList.add("kb-on");
+  } else {
+    bg.classList.remove("kb-on");
+    bg.style.transform = "";
+  }
+  // 구간 전환 크로스페이드 근사 — 구간이 바뀔 때 배경을 페이드 인
+  const key = sec ? sec.label + "@" + sec.start : null;
+  if (key !== _lastPreviewSec) {
+    _lastPreviewSec = key;
+    if ($("transition").value !== "none") {
+      bg.style.opacity = "0";
+      void bg.offsetWidth; // 리플로우 → opacity 트랜지션 발동
+    }
+    bg.style.opacity = "1";
+  }
+}
+
+function applyPreviewTitle(t) {
+  const el = $("previewTitle");
+  if (!el) return false;
+  const title = $("songTitle").value.trim();
+  const dur = Number($("introTitleDur").value) || 3;
+  // 인트로 타이틀: 켜져 있고 제목이 있고 타이틀 길이 안일 때 표시(최종 ASS와 동일 구간)
+  const on = $("introTitle").checked && title && t < dur;
+  if (on) {
+    el.textContent = title;
+    el.style.fontFamily = $("fontSelect").value;
+    const pw = $("preview").clientWidth || 640;
+    el.style.fontSize = Math.max(14, ((Number($("fontSize").value) || 48) * 1.7 * pw) / 1920) + "px";
+    el.classList.add("show");
+  } else {
+    el.classList.remove("show");
+  }
+  return on;
+}
+
+function syncPreviewVideo(vid, sec) {
+  // 영상 미리보기를 오디오 재생 위치/상태에 맞춘다(구간 시작 기준, 길이 반복).
+  if (vid.readyState >= 1 && vid.duration && isFinite(vid.duration)) {
+    const into = (audio.currentTime || 0) - sec.start;
+    const target = ((into % vid.duration) + vid.duration) % vid.duration;
+    if (Math.abs((vid.currentTime || 0) - target) > 0.4) {
+      try { vid.currentTime = target; } catch (e) { /* seek 무시 */ }
+    }
+  }
+  if (!audio.paused) {
+    if (vid.paused) vid.play().catch(() => {});
+  } else if (!vid.paused) {
+    vid.pause();
+  }
+}
+
 function updatePreview() {
   const prev = $("preview");
   if (!prev || currentStep < 2) return;
+  const bg = $("previewBg");
+  const vid = $("previewVideo");
   const t = audio.currentTime || 0;
   let sec = sectionsState.find((s) => t >= s.start && t < s.end);
   if (!sec && sectionsState.length) {
     sec = t < sectionsState[0].start ? sectionsState[0] : sectionsState[sectionsState.length - 1];
   }
-  if (sec && sec.image_url) {
-    prev.style.backgroundImage = `url('${sec.image_url}')`;
-    prev.style.backgroundColor = "";
+  const isVid = !!(sec && sec.image_url && isVideoUrl(sec.image_url));
+  if (isVid && vid) {
+    if (vid.dataset.src !== sec.image_url) {
+      vid.dataset.src = sec.image_url;
+      vid.src = sec.image_url;
+    }
+    vid.classList.add("show");
+    if (bg) { bg.style.backgroundImage = ""; bg.classList.remove("kb-on"); bg.style.opacity = "1"; }
+    syncPreviewVideo(vid, sec);
   } else {
-    prev.style.backgroundImage = "";
-    prev.style.backgroundColor = $("bgColor").value || "#10131c";
+    if (vid) { vid.classList.remove("show"); if (!vid.paused) vid.pause(); }
+    if (bg) {
+      if (sec && sec.image_url) {
+        bg.style.backgroundImage = `url('${sec.image_url}')`;
+        bg.style.backgroundColor = "";
+      } else {
+        bg.style.backgroundImage = "";
+        bg.style.backgroundColor = $("bgColor").value || "#10131c";
+      }
+      applyPreviewFx(bg, sec);
+    }
   }
   const sc = scenes.find((s) => t >= s.start && t < s.end);
   let off = false;
   if (sc) off = sectionsState.some((s) => s.subtitle === false && (s.scene_ids || []).includes(sc.id));
-  $("previewSub").innerHTML = sc && !off ? karaokeHTML(sc, t) : "";
+  const titleShown = applyPreviewTitle(t); // 타이틀 표시 중엔 자막 숨김(겹침 방지)
+  $("previewSub").innerHTML = sc && !off && !titleShown ? karaokeHTML(sc, t) : "";
   applyPreviewStyle();
   const meta = $("previewMeta");
   if (meta) {
@@ -1557,22 +1765,61 @@ $("stepTabs").addEventListener("click", (e) => {
   const li = e.target.closest("li[data-step]");
   if (li) goStep(Number(li.dataset.step));
 });
+$("stepTabs").addEventListener("keydown", (e) => {
+  const li = e.target.closest("li[data-step]");
+  if (!li) return;
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    goStep(Number(li.dataset.step));
+  } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    e.preventDefault();
+    const next = Number(li.dataset.step) + (e.key === "ArrowRight" ? 1 : -1);
+    const target = document.querySelector(`.steps li[data-step="${Math.max(1, Math.min(4, next))}"]`);
+    if (target) target.focus();
+  }
+});
 $("prevStep").addEventListener("click", () => goStep(currentStep - 1));
-$("nextStep").addEventListener("click", () => goStep(currentStep + 1));
+$("nextStep").addEventListener("click", () => {
+  if (currentStep === 1 && !scenes.length) {
+    return status("먼저 ‘자동 정렬 시작’으로 가사를 맞춰주세요.", "err");
+  }
+  goStep(currentStep + 1);
+});
 
-["fontSize", "bgColor", "subtitleStyle", "subtitlePos"].forEach((id) =>
-  $(id).addEventListener("input", updatePreview)
-);
-$("subtitlePos").addEventListener("change", updatePreview);
+// 미리보기 즉시 반영 — 폰트·전환·줌·인트로 타이틀·제목까지 포함(input/change 둘 다 안전망)
+["fontSize", "bgColor", "subtitleStyle", "subtitlePos", "fontSelect",
+ "transition", "transitionDur", "kenBurns", "songTitle", "introTitle",
+ "introTitleDur", "introFade", "outroFade"].forEach((id) => {
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener("input", updatePreview);
+  el.addEventListener("change", updatePreview);
+});
+// 폰트는 자막 스타일 미리보기(스와치)에도 반영
+$("fontSelect").addEventListener("change", updateStylePreview);
 $("fontSize").addEventListener("input", () => {
   $("fontSizeVal").textContent = $("fontSize").value;
+  $("fontSize").setAttribute("aria-valuetext", $("fontSize").value + "px");
 });
+
+// 썸네일은 제목이 있어야 — 없으면 버튼 비활성 + 안내
+function updateThumbBtnState() {
+  const has = !!$("songTitle").value.trim();
+  $("thumbBtn").disabled = !has;
+  $("thumbBtn").title = has ? "" : "먼저 ‘영상 제목’을 입력하세요";
+}
+$("songTitle").addEventListener("input", updateThumbBtnState);
+updateThumbBtnState();
 
 // 배경 연출 슬라이더 값 표시
 function updateFxLabels() {
-  $("transitionDurVal").textContent = Number($("transitionDur").value).toFixed(1) + "s";
+  const td = Number($("transitionDur").value).toFixed(1) + "s";
+  $("transitionDurVal").textContent = td;
+  $("transitionDur").setAttribute("aria-valuetext", td);
   const kb = Number($("kenBurns").value);
-  $("kenBurnsVal").textContent = kb > 0 ? "+" + Math.round(kb * 100) + "%" : "없음";
+  const kbt = kb > 0 ? "+" + Math.round(kb * 100) + "%" : "없음";
+  $("kenBurnsVal").textContent = kbt;
+  $("kenBurns").setAttribute("aria-valuetext", kbt);
 }
 $("transitionDur").addEventListener("input", updateFxLabels);
 $("kenBurns").addEventListener("input", updateFxLabels);

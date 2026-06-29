@@ -21,6 +21,10 @@ ASPECTS = {
 _VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
 
 
+def _is_video(path):
+    return os.path.splitext(path or "")[1].lower() in _VIDEO_EXT
+
+
 def _fit(w, h):
     return (
         f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
@@ -82,7 +86,10 @@ def _cmd_sections(audio_path, seg_bgs, ass_name, w, h, fade=""):
 
     cmd = ["ffmpeg", "-y"]
     for img, dur in segments:
-        cmd += ["-loop", "1", "-t", f"{dur}", "-i", img]
+        if _is_video(img):
+            cmd += ["-stream_loop", "-1", "-t", f"{dur}", "-i", img]  # 구간 영상은 길이만큼 반복
+        else:
+            cmd += ["-loop", "1", "-t", f"{dur}", "-i", img]
     cmd += ["-i", audio_path]  # 마지막 입력 = 오디오
 
     n = len(segments)
@@ -135,17 +142,20 @@ def _cmd_sections_fx(audio_path, seg_bgs, ass_name, w, h, total,
 
     cmd = ["ffmpeg", "-y"]
     for i in range(n):
-        if kb > 0:
-            cmd += ["-i", seg_bgs[i]["image_path"]]  # 한 프레임 → zoompan이 길이 생성
+        p = seg_bgs[i]["image_path"]
+        if _is_video(p):
+            cmd += ["-stream_loop", "-1", "-t", f"{round(clip_len(i), 3)}", "-i", p]  # 구간 영상 반복
+        elif kb > 0:
+            cmd += ["-i", p]  # 정지 이미지 한 프레임 → zoompan이 길이 생성
         else:
-            cmd += ["-loop", "1", "-t", f"{round(clip_len(i), 3)}",
-                    "-i", seg_bgs[i]["image_path"]]
+            cmd += ["-loop", "1", "-t", f"{round(clip_len(i), 3)}", "-i", p]
     cmd += ["-i", audio_path]
 
     fc = ""
     for k in range(n):
+        is_vid = _is_video(seg_bgs[k]["image_path"])
         chain = _fit(w, h)
-        if kb > 0:
+        if kb > 0 and not is_vid:  # Ken Burns 줌은 정지 이미지에만(영상은 그대로)
             up = 4 if w >= h else 3  # 지터 방지용 사전 업스케일(느린 줌엔 4배면 충분, 렌더 빠름)
             frames = max(1, round(clip_len(k) * 30))
             travel = max(1, round(durs[k] * 30))  # 줌은 표시 길이 동안 완료
