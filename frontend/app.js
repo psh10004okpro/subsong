@@ -1,3 +1,24 @@
+// ---- 서브패스(/subsong 등) 배포 대응 ----------------------------------------
+// 이 파일은 <base>/app.js 로 로드되므로, 자기 스크립트의 경로에서 앱이 마운트된
+// 베이스 경로를 자동 감지한다(루트 배포 시 "" → 동작 동일). 절대경로로 호출하는
+// /api·/data 요청에만 이 접두사를 붙여, 서브도메인/서브패스 어디든 그대로 돈다.
+const BASE = (() => {
+  const s =
+    document.currentScript ||
+    [...document.scripts].find((x) => /\/app\.js(\?|$)/.test(x.src || ""));
+  try {
+    return s && s.src ? new URL(s.src).pathname.replace(/\/app\.js.*$/, "") : "";
+  } catch (e) {
+    return "";
+  }
+})();
+const withBase = (u) =>
+  typeof u === "string" && /^\/(api|data)\//.test(u) ? BASE + u : u;
+if (BASE) {
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (u, opt) => _fetch(withBase(u), opt); // 모든 /api·/data fetch 자동 보정
+}
+
 let scenes = [];
 let audioId = null;
 let bgId = null;
@@ -534,7 +555,7 @@ function renderResults(videos) {
 
 function listenRenderJob(jid) {
   if (renderES) renderES.close();
-  renderES = new EventSource(`/api/jobs/${jid}/events`);
+  renderES = new EventSource(withBase(`/api/jobs/${jid}/events`)); // EventSource는 fetch 오버라이드 밖이라 명시 보정
   renderES.onmessage = (ev) => {
     let j;
     try {
@@ -1135,7 +1156,7 @@ $("sections").addEventListener("click", (e) => {
 function collectState() {
   return {
     audio_id: audioId,
-    audio_url: audioId ? `/data/${audioId}` : "",
+    audio_url: audioId ? withBase(`/data/${audioId}`) : "",
     language: $("language").value,
     lyrics: $("lyrics").value,
     scenes,
@@ -1748,7 +1769,7 @@ async function uploadSectionImage(s, file) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     s.image_id = data.bg_id;
-    s.image_url = data.bg_url || "/data/" + data.bg_id;
+    s.image_url = data.bg_url || withBase("/data/" + data.bg_id);
     s.candidates = [{ image_id: s.image_id, image_url: s.image_url, has_face: false }];
     if (!anchor) setAnchor(s);
     renderSectionCards();

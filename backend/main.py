@@ -14,7 +14,12 @@ import uuid
 from datetime import datetime
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -33,6 +38,16 @@ FRONT = os.path.join(BASE, "frontend")
 PROJECTS = os.path.join(DATA, "projects")
 os.makedirs(DATA, exist_ok=True)
 os.makedirs(PROJECTS, exist_ok=True)
+
+# 서브패스 배포(예: 리버스 프록시 뒤 /subsong). 빈 값이면 루트(/)에서 서빙.
+# Cloudflare 터널 등 "접두사를 떼지 않는" 프록시를 위해, 설정 시 앱 전체를 이 경로
+# 아래에 마운트하고(파일 끝), 서버가 돌려주는 /data URL에도 이 접두사를 붙인다.
+BASE_PATH = (os.environ.get("SUBSONG_BASE_PATH") or "").rstrip("/")
+
+
+def _data_url(name: str) -> str:
+    """업로드/출력 파일의 공개 URL. 서브패스 배포 시 접두사를 포함한다."""
+    return f"{BASE_PATH}/data/{name}"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -164,13 +179,13 @@ async def api_align(
         scenes = align_mod.align(audio_path, lyrics, language=language)
     except Exception as e:  # noqa: BLE001 - 사용자에게 메시지로 전달
         raise HTTPException(500, f"정렬 실패: {e}")
-    return {"audio_id": audio_id, "audio_url": f"/data/{audio_id}", "scenes": scenes}
+    return {"audio_id": audio_id, "audio_url": _data_url(audio_id), "scenes": scenes}
 
 
 @app.post("/api/upload-bg")
 async def api_upload_bg(file: UploadFile = File(...)):
     bg_id = _save_upload(file, ".jpg")
-    return {"bg_id": bg_id, "bg_url": f"/data/{bg_id}"}
+    return {"bg_id": bg_id, "bg_url": _data_url(bg_id)}
 
 
 @app.post("/api/images")
@@ -226,7 +241,7 @@ def api_candidates(req: CandidatesReq):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"이미지 생성 실패: {e}")
     for c in cands:
-        c["image_url"] = f"/data/{c['image_id']}"
+        c["image_url"] = _data_url(c['image_id'])
         c.pop("path", None)
     return {"candidates": cands}
 
@@ -238,7 +253,7 @@ def api_thumbnail(req: ThumbReq):
         tid = images_mod.make_thumbnail(DATA, req.title, req.subtitle, req.image_id or None)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, f"썸네일 생성 실패: {e}")
-    return {"image_id": tid, "image_url": f"/data/{tid}"}
+    return {"image_id": tid, "image_url": _data_url(tid)}
 
 
 @app.post("/api/srt")
@@ -287,7 +302,7 @@ def api_render(req: RenderReq):
                 )
                 if job.cancelled or out is None:
                     break
-                videos.append({"aspect": asp, "video_url": f"/data/{os.path.basename(out)}"})
+                videos.append({"aspect": asp, "video_url": _data_url(os.path.basename(out))})
             if job.cancelled:
                 job.status, job.message = "cancelled", "취소됨"
             else:
@@ -425,3 +440,18 @@ class NoCacheStatic(StaticFiles):
 
 app.mount("/data", StaticFiles(directory=DATA), name="data")
 app.mount("/", NoCacheStatic(directory=FRONT, html=True), name="front")
+
+
+# 서브패스 배포: 앱 전체를 BASE_PATH 아래로 마운트한다. Cloudflare 터널처럼 경로
+# 접두사를 떼지 않는 프록시가 /subsong/... 를 그대로 넘겨도 내부 라우트(/api, /data, /)
+# 가 그대로 동작한다(마운트가 접두사를 벗겨 내부 앱에 전달). BASE_PATH 미설정 시 그대로 루트.
+if BASE_PATH:
+    _root = FastAPI()
+
+    @_root.get(BASE_PATH)
+    def _base_redirect():
+        # /subsong → /subsong/ (상대경로 자산이 올바로 풀리도록 슬래시 보정)
+        return RedirectResponse(url=BASE_PATH + "/", status_code=307)
+
+    _root.mount(BASE_PATH, app)
+    app = _root
