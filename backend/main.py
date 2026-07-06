@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from . import align as align_mod
 from . import ambient as ambient_mod
+from . import avatar as avatar_mod
 from . import beats as beats_mod
 from . import images as images_mod
 from . import story as story_mod
@@ -353,6 +354,89 @@ def api_story(req: StoryReq):
             job.status, job.progress = "done", 1.0
         except Exception as e:  # noqa: BLE001
             logger.exception("story job %s failed", job.id)
+            job.status, job.error = "error", str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job.id}
+
+
+class AvatarScriptReq(BaseModel):
+    topic: str
+    tone: str = "trust"
+    length: int = 20
+
+
+class AvatarImageReq(BaseModel):
+    description: str = ""
+    tone: str = "trust"
+
+
+@app.get("/api/avatar/options")
+def api_avatar_options():
+    """아바타 모드 톤·보이스(마브 저장)·토킹헤드 모델 목록."""
+    return {
+        "tones": [{"key": k, "label": v["label"], "emoji": v["emoji"]}
+                  for k, v in avatar_mod.TONES.items()],
+        "voices": avatar_mod.list_voices(),
+        "models": avatar_mod.TALKING_HEAD_MODELS,
+    }
+
+
+@app.post("/api/avatar/generate-script")
+def api_avatar_generate_script(req: AvatarScriptReq):
+    """주제 → 아바타 발화 대본(톤 반영)."""
+    try:
+        text = avatar_mod.generate_script(req.topic, req.tone, req.length)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"대본 생성 실패: {e}")
+    return {"text": text}
+
+
+@app.post("/api/avatar/generate-image")
+def api_avatar_generate_image(req: AvatarImageReq):
+    """설명 → 마브로 사실적 아바타 이미지 생성(subsong DATA 저장)."""
+    try:
+        image_id = avatar_mod.generate_avatar_image(req.description, req.tone, DATA)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"아바타 이미지 생성 실패: {e}")
+    return {"image_id": image_id, "image_url": _data_url(image_id)}
+
+
+@app.post("/api/avatar")
+def api_avatar(
+    portrait: UploadFile = File(None),
+    image_id: str = Form(""),
+    script: str = Form(...),
+    voice: str = Form(""),
+    tone: str = Form("trust"),
+    model: str = Form(""),
+):
+    """아바타 이미지 + 대본 + 보이스 → 말하는 영상(마브 talking_head, 백그라운드 잡)."""
+    if portrait is not None and portrait.filename:
+        pid = _save_upload(portrait, ".png")
+        portrait_path = os.path.join(DATA, pid)
+    elif image_id:
+        portrait_path = os.path.join(DATA, os.path.basename(image_id))
+    else:
+        raise HTTPException(400, "아바타 이미지를 업로드하거나 생성하세요.")
+    if not os.path.exists(portrait_path):
+        raise HTTPException(404, "아바타 이미지를 찾을 수 없습니다.")
+    if not (script or "").strip():
+        raise HTTPException(400, "대본을 입력하세요.")
+
+    job = jobs_mod.create("avatar")
+
+    def run():
+        try:
+            vid = avatar_mod.build(portrait_path, script, voice or None, tone, DATA,
+                                   model=model or None, job=job)
+            if job.cancelled:
+                job.status, job.message = "cancelled", "취소됨"
+                return
+            job.result = {"video_id": vid, "video_url": _data_url(vid)}
+            job.status, job.progress = "done", 1.0
+        except Exception as e:  # noqa: BLE001
+            logger.exception("avatar job %s failed", job.id)
             job.status, job.error = "error", str(e)
 
     threading.Thread(target=run, daemon=True).start()

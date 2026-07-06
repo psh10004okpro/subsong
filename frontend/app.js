@@ -34,6 +34,9 @@ let audioLeadSec = 0; // 영상 앞 무음/타이틀 프리롤 길이. 실제 �
 let mode = "lyrics"; // "lyrics"(가사) | "ambient"(분위기) | "story"(스토리)
 let ambientPurpose = "meditation"; // 분위기 모드 목적 프리셋 키
 let storyGenre = "yadam"; // 스토리 모드 장르 키
+let avatarTone = "trust"; // 아바타 모드 용도(톤)
+let avatarImageId = ""; // 생성/기존 아바타 이미지 id (DATA)
+let avatarUploadFile = null; // 업로드한 아바타 사진 File (있으면 우선)
 
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
@@ -418,6 +421,7 @@ function updateActionState() {
   $("alignBtn").disabled = isAligning || !hasSource || !hasLyrics;
   if ($("ambientBtn")) $("ambientBtn").disabled = !hasSource;
   if ($("storyBtn")) $("storyBtn").disabled = !($("storyText") && $("storyText").value.trim());
+  if ($("avatarBtn")) $("avatarBtn").disabled = !($("avatarScript") && $("avatarScript").value.trim() && (avatarImageId || avatarUploadFile));
   $("srtBtn").disabled = !hasScenes || !timingOk;
   const canRender = !isRendering && audioId && hasScenes && timingOk;
   if ($("manualEditBtn")) $("manualEditBtn").disabled = !hasScenes;
@@ -645,18 +649,22 @@ async function doAlign() {
   }
 }
 
-// ---- 제작 모드: lyrics(가사) / ambient(분위기) / story(스토리) ----
-const MODES = ["lyrics", "ambient", "story"];
+// ---- 제작 모드: lyrics(가사) / ambient(분위기) / story(스토리) / avatar(아바타) ----
+const MODES = ["lyrics", "ambient", "story", "avatar"];
 const MODE_LABELS = {
   lyrics: "🎤 가사 뮤직비디오",
   ambient: "🌙 분위기 영상",
   story: "📖 스토리 영상",
+  avatar: "🧑‍💼 아바타 영상",
 };
 function isAmbient() {
   return mode === "ambient";
 }
 function isStory() {
   return mode === "story";
+}
+function isAvatar() {
+  return mode === "avatar";
 }
 // ambient·story는 가사 그룹핑 대신 sections를 미리 만들어 쓰는 공통 성격.
 function isPrebuiltMode() {
@@ -668,10 +676,12 @@ function setMode(next, save = true) {
   MODES.forEach((m) => {
     document.querySelectorAll(`.mode-${m}-only`).forEach((el) => el.classList.toggle("hidden", mode !== m));
   });
-  // 음원 업로드는 lyrics/ambient 전용(story는 나레이션을 자동 생성).
+  // 음원 업로드는 lyrics/ambient 전용(story·avatar는 음성을 자동 생성).
   const af = $("audioFile");
   const afField = af && af.closest(".field");
-  if (afField) afField.classList.toggle("hidden", isStory());
+  if (afField) afField.classList.toggle("hidden", isStory() || isAvatar());
+  // 아바타는 이 화면에서 바로 결과가 나오는 단일-스텝 모드 → 단계 이동 버튼 숨김.
+  if ($("nextStep")) $("nextStep").classList.toggle("hidden", isAvatar() || currentStep === 4);
   const banner = $("modeBannerName");
   if (banner) banner.textContent = MODE_LABELS[mode];
   updateActionState();
@@ -859,6 +869,122 @@ async function pollStoryJob(jid) {
     if (j.status === "done") return j.result || {};
     if (j.status === "error") throw new Error(j.error || "생성 실패");
     if (j.status === "cancelled") throw new Error("취소됨");
+  }
+}
+
+// ---- 아바타(인물이 말하는) 모드 — 마브 talking_head ----
+async function loadAvatarOptions() {
+  const sel = $("avatarVoice");
+  if (!sel) return;
+  try {
+    const res = await fetch("/api/avatar/options");
+    const data = await res.json();
+    const voices = data.voices || [];
+    sel.innerHTML = voices.length
+      ? voices.map((v) => `<option value="${v.key}">${escapeHtml(v.label)}</option>`).join("")
+      : '<option value="">저장된 목소리 없음</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">목소리 목록 실패</option>';
+  }
+}
+
+function updateAvatarStats() {
+  const el = $("avatarScript");
+  if (el && $("avatarStats")) $("avatarStats").textContent = `${el.value.length}자`;
+}
+
+function setAvatarPreview(url) {
+  const box = $("avatarPreview");
+  if (!box) return;
+  box.innerHTML = url ? `<img src="${url}" alt="아바타" />` : "<span>아바타 미리보기</span>";
+}
+
+async function doAvatarGenImage() {
+  const desc = $("avatarDesc").value.trim();
+  const btn = $("avatarGenImgBtn");
+  btn.disabled = true;
+  btn.textContent = "생성 중…";
+  busy("AI 아바타 이미지를 생성하는 중입니다…");
+  try {
+    const res = await fetch("/api/avatar/generate-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc, tone: avatarTone }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    avatarImageId = data.image_id;
+    avatarUploadFile = null;
+    setAvatarPreview(data.image_url);
+    updateActionState();
+    status("아바타 이미지를 생성했습니다.", "ok");
+  } catch (e) {
+    status("아바타 이미지 생성 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✨ AI 생성";
+  }
+}
+
+async function doAvatarGenScript() {
+  const topic = $("avatarTopic").value.trim();
+  if (!topic) return status("AI로 생성할 주제를 입력하세요.", "err");
+  const btn = $("avatarGenScriptBtn");
+  btn.disabled = true;
+  btn.textContent = "생성 중…";
+  busy("AI가 대본을 쓰는 중입니다…");
+  try {
+    const res = await fetch("/api/avatar/generate-script", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, tone: avatarTone, length: Number($("avatarLength").value) || 20 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    $("avatarScript").value = data.text || "";
+    updateAvatarStats();
+    updateActionState();
+    status("대본을 생성했습니다. 확인·수정 후 ‘아바타 영상 만들기’를 누르세요.", "ok");
+  } catch (e) {
+    status("대본 생성 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✨ 대본";
+  }
+}
+
+async function doAvatar() {
+  const script = $("avatarScript").value.trim();
+  if (!script) return status("대본을 입력하거나 AI로 생성하세요.", "err");
+  if (!avatarUploadFile && !avatarImageId) return status("아바타 이미지를 업로드하거나 생성하세요.", "err");
+  const btn = $("avatarBtn");
+  btn.disabled = true;
+  btn.textContent = "만드는 중…";
+  $("avatarResult").classList.add("hidden");
+  busy("아바타 영상을 만드는 중입니다. 1~3분 걸릴 수 있어요…");
+  try {
+    const fd = new FormData();
+    fd.append("script", script);
+    fd.append("voice", $("avatarVoice").value || "");
+    fd.append("tone", avatarTone);
+    fd.append("model", "");
+    if (avatarUploadFile) fd.append("portrait", avatarUploadFile);
+    else fd.append("image_id", avatarImageId);
+    const res = await fetch("/api/avatar", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const result = await pollStoryJob(data.job_id);
+    const url = result.video_url;
+    $("avatarVideo").src = url;
+    $("avatarDownload").href = url;
+    $("avatarResult").classList.remove("hidden");
+    status("아바타 영상을 만들었습니다.", "ok");
+  } catch (e) {
+    status("아바타 영상 만들기 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "아바타 영상 만들기";
+    updateActionState();
   }
 }
 
@@ -1816,6 +1942,32 @@ $("genreChips").addEventListener("click", (e) => {
   if (!chip) return;
   storyGenre = chip.dataset.genre || "yadam";
   $("genreChips").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === chip));
+  scheduleAutosave();
+});
+
+// ---- 아바타 모드 위젯 ----
+$("avatarBtn").addEventListener("click", doAvatar);
+$("avatarGenImgBtn").addEventListener("click", doAvatarGenImage);
+$("avatarGenScriptBtn").addEventListener("click", doAvatarGenScript);
+$("avatarScript").addEventListener("input", () => {
+  updateAvatarStats();
+  updateActionState();
+  scheduleAutosave();
+});
+$("avatarVoice").addEventListener("change", scheduleAutosave);
+$("avatarFile").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  avatarUploadFile = f;
+  avatarImageId = "";
+  setAvatarPreview(URL.createObjectURL(f));
+  updateActionState();
+});
+$("toneChips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  avatarTone = chip.dataset.tone || "trust";
+  $("toneChips").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === chip));
   scheduleAutosave();
 });
 
@@ -3027,6 +3179,11 @@ function collectState() {
     story_text: $("storyText") ? $("storyText").value : "",
     story_topic: $("storyTopic") ? $("storyTopic").value : "",
     story_length: $("storyLength") ? $("storyLength").value : "60",
+    avatar_tone: avatarTone,
+    avatar_image_id: avatarImageId,
+    avatar_script: $("avatarScript") ? $("avatarScript").value : "",
+    avatar_topic: $("avatarTopic") ? $("avatarTopic").value : "",
+    avatar_voice: $("avatarVoice") ? $("avatarVoice").value : "",
     language: $("language").value,
     lyrics: $("lyrics").value,
     step: currentStep,            // 새로고침 후 같은 단계로 복원하기 위해 현재 단계 저장
@@ -3101,6 +3258,17 @@ function applyState(st) {
       c.classList.toggle("active", c.dataset.genre === storyGenre));
   }
   updateStoryStats();
+  avatarTone = st.avatar_tone || "trust";
+  avatarImageId = st.avatar_image_id || "";
+  avatarUploadFile = null;
+  if ($("avatarScript")) $("avatarScript").value = st.avatar_script || "";
+  if ($("avatarTopic")) $("avatarTopic").value = st.avatar_topic || "";
+  if ($("toneChips")) {
+    $("toneChips").querySelectorAll(".chip").forEach((c) =>
+      c.classList.toggle("active", c.dataset.tone === avatarTone));
+  }
+  setAvatarPreview(avatarImageId ? withBase(`/data/${avatarImageId}`) : "");
+  updateAvatarStats();
   setMode(st.mode || "lyrics", false);
   if ($("titleLeadSec")) $("titleLeadSec").value = st.title_lead_sec || audioLeadSec || 3;
   if ($("endingTailSec")) $("endingTailSec").value = st.ending_tail_sec || 3;
@@ -3950,6 +4118,7 @@ async function init() {
   renderChapters();
   updateStylePreview();
   refreshProjects();
+  loadAvatarOptions(); // 마브 저장 보이스 목록(아바타 모드)
   // 항상 진입 화면부터: 모드를 고르거나(새로 시작), 이전 작업이 있으면 이어서.
   goStep(1);
   showModeLanding(hasRestorableSession());
