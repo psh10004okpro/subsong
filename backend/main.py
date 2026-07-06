@@ -371,6 +371,26 @@ class AvatarImageReq(BaseModel):
     tone: str = "trust"
 
 
+@app.get("/api/health/services")
+def api_health_services():
+    """스토리(TTS·LLM)·아바타(마브·LLM) 모드가 쓰는 외부 서비스 헬스."""
+    import requests as _rq
+
+    def _ping(url, timeout=3):
+        try:
+            return _rq.get(url, timeout=timeout).status_code < 500
+        except Exception:
+            return False
+
+    tts_health = story_mod.TTS_URL.rsplit("/", 1)[0] + "/health"
+    llm_models = story_mod.LLM_URL.replace("/chat/completions", "/models")
+    return {
+        "tts": _ping(tts_health),
+        "llm": _ping(llm_models),
+        "marv": _ping(f"{avatar_mod.BASE}/v1/health"),
+    }
+
+
 @app.get("/api/avatar/options")
 def api_avatar_options():
     """아바타 모드 톤·보이스(마브 저장)·토킹헤드 모델 목록."""

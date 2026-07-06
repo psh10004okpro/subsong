@@ -148,13 +148,13 @@ def build(portrait_path, script, voice_id, tone, out_dir, model=None, job=None):
         raise ValueError("아바타 이미지가 없습니다.")
     t = _tone(tone)
     model = model or t["model"]
-    dur = max(5, min(90, round(len(script) / 4)))  # 한국어 낭독 대략 4자/초
 
     if job is not None:
         job.message = "아바타 영상 생성 요청"; job.progress = 0.05
+    # duration_s는 보내지 않는다 — 마브가 대본 TTS 길이에 맞춰 정하게 해 대사 잘림을 막는다.
     data = {
         "model": model, "prompt_ko": script,
-        "duration_s": str(dur), "emotion": t["emotion"],
+        "emotion": t["emotion"],
         "params_json": json.dumps({}),
     }
     if voice_id:

@@ -67,10 +67,13 @@ def voice_ref(voice: str) -> str:
 
 
 def _genre_style(genre: str, custom: str = "") -> str:
+    custom = (custom or "").strip()
     g = GENRES.get(genre)
     if g:
-        return g["style"]
-    return (custom or "").strip() or DEFAULT_STYLE
+        # 프리셋 장르 + 추가 분위기/화풍(있으면 덧붙임).
+        return f"{g['style']}, {custom}" if custom else g["style"]
+    # 직접(custom) 장르 — 입력 문구가 화풍의 뼈대.
+    return custom or DEFAULT_STYLE
 
 
 # ---------- LLM ----------

@@ -722,6 +722,13 @@ body.guide-mode a[data-guide]::after {
   background: #000;
   max-height: 60vh;
 }
+.notice-warn {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, var(--surface));
+}
+.notice-warn strong {
+  color: var(--amber);
+}
 
 .lyrics-field {
   min-height: 0;

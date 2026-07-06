@@ -8,7 +8,7 @@
   <link rel="shortcut icon" href="favicon.ico?v=20260630b" />
   <link rel="icon" type="image/png" href="favicon.png?v=20260630b" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260630b" />
-  <link rel="stylesheet" href="style.css?v=20260706e" />
+  <link rel="stylesheet" href="style.css?v=20260706f" />
 </head>
 <body class="theme-light">
   <header class="app-header">
@@ -123,6 +123,7 @@
             <b id="modeBannerName">🎤 가사 뮤직비디오</b>
             <button type="button" id="changeModeBtn" class="link-btn">다시 선택</button>
           </div>
+          <aside id="serviceWarn" class="notice notice-warn hidden"></aside>
           <div class="section-title source-title">
             <span class="kicker">Step 1</span>
             <h2>소스 준비</h2>
@@ -164,7 +165,12 @@
             <span>나레이션 목소리</span>
             <select id="avatarVoice"><option value="">불러오는 중…</option></select>
           </label>
+          <label class="select-field mode-avatar-only hidden" for="avatarModel">
+            <span>아바타 모델 <small>(선택)</small></span>
+            <select id="avatarModel"><option value="">기본</option></select>
+          </label>
           <button type="button" id="avatarBtn" class="primary mode-avatar-only hidden">아바타 영상 만들기</button>
+          <button type="button" id="jobCancelBtn" class="ghost hidden">생성 취소</button>
           <aside class="notice mode-lyrics-only">
             <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
             <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠릅니다.</span>
@@ -243,6 +249,10 @@
               <button type="button" class="chip" data-genre="knowledge">💡 지식</button>
               <button type="button" class="chip" data-genre="custom">✎ 직접</button>
             </div>
+          </div>
+          <div class="field">
+            <label for="storyMood">분위기·화풍 <small>(선택 · ‘직접’ 장르는 필수)</small></label>
+            <input type="text" id="storyMood" placeholder="예: 수묵화풍, 새벽 안개, 따뜻한 색감" />
           </div>
           <div class="field">
             <label for="storyTopic">주제로 AI 생성 <small>(선택)</small></label>
@@ -809,6 +819,6 @@
 
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
   <div id="guideTip" class="guide-tip hidden" role="tooltip"></div>
-  <script src="app.js?v=20260706e"></script>
+  <script src="app.js?v=20260706f"></script>
 </body>
 </html>

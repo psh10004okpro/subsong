@@ -686,7 +686,35 @@ function setMode(next, save = true) {
   if (banner) banner.textContent = MODE_LABELS[mode];
   updateActionState();
   renderChapters(); // 스탭3 버튼(가사별 나누기·프롬프트·비트) 노출을 모드에 맞게 갱신
+  checkServices(); // 스토리·아바타가 쓰는 외부 서비스 헬스 경고
   if (save) scheduleAutosave();
+}
+
+// 스토리(TTS·LLM)·아바타(마브·LLM) 외부 서비스 헬스 → 다운 시 사전 경고.
+async function checkServices() {
+  const warn = $("serviceWarn");
+  if (!warn) return;
+  if (!isStory() && !isAvatar()) {
+    warn.classList.add("hidden");
+    return;
+  }
+  try {
+    const h = await (await fetch("/api/health/services")).json();
+    const down = [];
+    if (isStory() && !h.tts) down.push("나레이션(TTS)");
+    if (isAvatar() && !h.marv) down.push("아바타 생성(마브)");
+    if (!h.llm) down.push("AI 자동생성(LLM)");
+    if (down.length) {
+      warn.innerHTML =
+        `<strong>일부 서비스가 응답하지 않습니다: ${escapeHtml(down.join(", "))}</strong>` +
+        "<span>지금 만들면 실패하거나 일부 기능이 제한될 수 있습니다. 잠시 후 다시 시도해 주세요.</span>";
+      warn.classList.remove("hidden");
+    } else {
+      warn.classList.add("hidden");
+    }
+  } catch (e) {
+    warn.classList.add("hidden");
+  }
 }
 
 // 진입 화면(landing): 무엇을 만들지 먼저 고르고 스튜디오로 들어간다.
@@ -810,6 +838,9 @@ async function doStoryGenerate() {
 async function doStory() {
   const text = $("storyText").value.trim();
   if (!text) return status("이야기 대본을 입력하거나 AI로 생성하세요.", "err");
+  if (storyGenre === "custom" && !($("storyMood") && $("storyMood").value.trim())) {
+    return status("‘직접’ 장르는 분위기·화풍을 입력하세요.", "err");
+  }
   const btn = $("storyBtn");
   btn.disabled = true;
   btn.textContent = "만드는 중…";
@@ -820,7 +851,7 @@ async function doStory() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text, genre: storyGenre, voice: $("storyVoice").value || "warm_f",
-        custom_style: storyGenre === "custom" ? ($("imgStyle") ? $("imgStyle").value.trim() : "") : "",
+        custom_style: $("storyMood") ? $("storyMood").value.trim() : "",
       }),
     });
     const data = await res.json();
@@ -859,16 +890,30 @@ async function doStory() {
   }
 }
 
+let currentJobId = null; // 진행 중 스토리/아바타 잡 (취소용)
+const JOB_POLL_TIMEOUT_MS = 25 * 60 * 1000; // 25분 상한
+
 async function pollStoryJob(jid) {
-  for (;;) {
-    await _sleep(1000);
-    const res = await fetch(`/api/jobs/${jid}`);
-    if (!res.ok) throw new Error("작업 상태를 가져오지 못했습니다.");
-    const j = await res.json();
-    if (j.message) busy(`${j.message} (${Math.round((j.progress || 0) * 100)}%)`);
-    if (j.status === "done") return j.result || {};
-    if (j.status === "error") throw new Error(j.error || "생성 실패");
-    if (j.status === "cancelled") throw new Error("취소됨");
+  currentJobId = jid;
+  if ($("jobCancelBtn")) $("jobCancelBtn").classList.remove("hidden");
+  const started = performance.now();
+  try {
+    for (;;) {
+      await _sleep(1000);
+      if (performance.now() - started > JOB_POLL_TIMEOUT_MS) {
+        throw new Error("시간이 초과되었습니다(25분). 서비스 상태를 확인하세요.");
+      }
+      const res = await fetch(`/api/jobs/${jid}`);
+      if (!res.ok) throw new Error("작업 상태를 가져오지 못했습니다.");
+      const j = await res.json();
+      if (j.message) busy(`${j.message} (${Math.round((j.progress || 0) * 100)}%)`);
+      if (j.status === "done") return j.result || {};
+      if (j.status === "error") throw new Error(j.error || "생성 실패");
+      if (j.status === "cancelled") throw new Error("취소됨");
+    }
+  } finally {
+    currentJobId = null;
+    if ($("jobCancelBtn")) $("jobCancelBtn").classList.add("hidden");
   }
 }
 
@@ -883,6 +928,12 @@ async function loadAvatarOptions() {
     sel.innerHTML = voices.length
       ? voices.map((v) => `<option value="${v.key}">${escapeHtml(v.label)}</option>`).join("")
       : '<option value="">저장된 목소리 없음</option>';
+    const msel = $("avatarModel");
+    if (msel) {
+      const models = data.models || [];
+      msel.innerHTML = '<option value="">기본(용도별 추천)</option>' +
+        models.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+    }
   } catch (e) {
     sel.innerHTML = '<option value="">목소리 목록 실패</option>';
   }
@@ -967,7 +1018,7 @@ async function doAvatar() {
     fd.append("script", script);
     fd.append("voice", $("avatarVoice").value || "");
     fd.append("tone", avatarTone);
-    fd.append("model", "");
+    fd.append("model", ($("avatarModel") && $("avatarModel").value) || "");
     if (avatarUploadFile) fd.append("portrait", avatarUploadFile);
     else fd.append("image_id", avatarImageId);
     const res = await fetch("/api/avatar", { method: "POST", body: fd });
@@ -1969,6 +2020,18 @@ $("toneChips").addEventListener("click", (e) => {
   avatarTone = chip.dataset.tone || "trust";
   $("toneChips").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === chip));
   scheduleAutosave();
+});
+$("jobCancelBtn").addEventListener("click", async () => {
+  if (!currentJobId) return;
+  $("jobCancelBtn").disabled = true;
+  try {
+    await fetch(`/api/jobs/${currentJobId}/cancel`, { method: "POST" });
+    busy("취소하는 중…");
+  } catch (e) {
+    /* 폴러가 상태로 감지 */
+  } finally {
+    $("jobCancelBtn").disabled = false;
+  }
 });
 
 window.addEventListener("beforeunload", (e) => {
@@ -3179,11 +3242,13 @@ function collectState() {
     story_text: $("storyText") ? $("storyText").value : "",
     story_topic: $("storyTopic") ? $("storyTopic").value : "",
     story_length: $("storyLength") ? $("storyLength").value : "60",
+    story_mood: $("storyMood") ? $("storyMood").value : "",
     avatar_tone: avatarTone,
     avatar_image_id: avatarImageId,
     avatar_script: $("avatarScript") ? $("avatarScript").value : "",
     avatar_topic: $("avatarTopic") ? $("avatarTopic").value : "",
     avatar_voice: $("avatarVoice") ? $("avatarVoice").value : "",
+    avatar_model: $("avatarModel") ? $("avatarModel").value : "",
     language: $("language").value,
     lyrics: $("lyrics").value,
     step: currentStep,            // 새로고침 후 같은 단계로 복원하기 위해 현재 단계 저장
@@ -3253,6 +3318,7 @@ function applyState(st) {
   if ($("storyText")) $("storyText").value = st.story_text || "";
   if ($("storyTopic")) $("storyTopic").value = st.story_topic || "";
   if ($("storyLength") && st.story_length) $("storyLength").value = st.story_length;
+  if ($("storyMood")) $("storyMood").value = st.story_mood || "";
   if ($("genreChips")) {
     $("genreChips").querySelectorAll(".chip").forEach((c) =>
       c.classList.toggle("active", c.dataset.genre === storyGenre));
@@ -3263,6 +3329,7 @@ function applyState(st) {
   avatarUploadFile = null;
   if ($("avatarScript")) $("avatarScript").value = st.avatar_script || "";
   if ($("avatarTopic")) $("avatarTopic").value = st.avatar_topic || "";
+  if ($("avatarModel") && st.avatar_model) $("avatarModel").value = st.avatar_model;
   if ($("toneChips")) {
     $("toneChips").querySelectorAll(".chip").forEach((c) =>
       c.classList.toggle("active", c.dataset.tone === avatarTone));
