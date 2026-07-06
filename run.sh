@@ -15,6 +15,19 @@ if [ -f "$PWD/.env.local" ]; then
   set +a
 fi
 
+# ffmpeg/ffprobe 보장 — 렌더·정렬(whisper 오디오 디코드)·분위기 길이측정에 필수.
+# subsong env의 bin(자체 정적 ffmpeg)을 PATH 맨 앞에 둔다 → 다른 env에 의존하지 않음.
+export PATH="$(dirname "$PY"):$PATH"
+# 그래도 못 찾으면(정적 바이너리가 지워진 경우 등) 다른 env에서 찾아 붙이는 안전망.
+if ! command -v ffprobe >/dev/null 2>&1; then
+  for _D in /home/jovyan/ditto-env/bin /home/jovyan/.conda/envs/LivePortrait/bin \
+            /home/jovyan/.conda/envs/voxcpm/bin /opt/conda/bin; do
+    if [ -x "$_D/ffprobe" ] && [ -x "$_D/ffmpeg" ]; then
+      export PATH="$_D:$PATH"; echo "[i] ffmpeg PATH 보강(폴백): $_D"; break
+    fi
+  done
+fi
+
 # 어떤 GPU를 쓸지 (기본 0 — 비어있는 카드). nvidia-smi 로 확인.
 export CUDA_VISIBLE_DEVICES="${SUBSONG_GPU:-0}"
 

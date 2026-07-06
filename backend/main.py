@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import align as align_mod
+from . import ambient as ambient_mod
 from . import beats as beats_mod
 from . import images as images_mod
 from . import jobs as jobs_mod
@@ -267,6 +268,32 @@ def api_align(
     except Exception as e:  # noqa: BLE001 - 사용자에게 메시지로 전달
         raise HTTPException(500, f"정렬 실패: {e}")
     return {"audio_id": audio_id, "audio_url": _data_url(audio_id), "scenes": scenes}
+
+
+@app.post("/api/ambient")
+def api_ambient(
+    audio: UploadFile = File(...),
+    purpose: str = Form("meditation"),
+    mood: str = Form(""),
+    count: int = Form(6),
+    style: str = Form(""),
+):
+    """가사 없이 '음악 + 목적' → 배경 슬라이드쇼용 장면/구간 생성.
+
+    가사 정렬(/api/align) 대신, 음원 길이를 장면 수만큼 균등 분할하고 목적 프리셋
+    프롬프트를 채운 sections를 돌려준다. 이미지 생성·렌더는 기존 흐름을 그대로 쓴다.
+    """
+    audio_id = _save_upload(audio, ".mp3")
+    audio_path = os.path.join(DATA, audio_id)
+    duration = render_mod.probe_duration(audio_path)
+    scenes, sections = ambient_mod.build(duration, count, purpose, mood, style)
+    return {
+        "audio_id": audio_id,
+        "audio_url": _data_url(audio_id),
+        "duration": duration,
+        "scenes": scenes,
+        "sections": sections,
+    }
 
 
 @app.post("/api/upload-bg")

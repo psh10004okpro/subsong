@@ -31,6 +31,8 @@ let anchor = null; // 일관성 참조 { image_id, image_url, has_face }
 let useRef = true;
 let outputEditIndex = 0;
 let audioLeadSec = 0; // 영상 앞 무음/타이틀 프리롤 길이. 실제 오디오는 이 시간만큼 뒤에서 시작한다.
+let mode = "lyrics"; // "lyrics"(가사 뮤직비디오) | "ambient"(가사 없는 분위기 영상)
+let ambientPurpose = "meditation"; // 분위기 모드 목적 프리셋 키
 
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
@@ -411,7 +413,9 @@ function updateActionState() {
   const hasScenes = scenes.length > 0;
   const timingOk = !hasTimingIssues();
 
+  const ambient = isAmbient();
   $("alignBtn").disabled = isAligning || !hasSource || !hasLyrics;
+  if ($("ambientBtn")) $("ambientBtn").disabled = !hasSource;
   $("srtBtn").disabled = !hasScenes || !timingOk;
   const canRender = !isRendering && audioId && hasScenes && timingOk;
   if ($("manualEditBtn")) $("manualEditBtn").disabled = !hasScenes;
@@ -419,8 +423,17 @@ function updateActionState() {
   $("renderBtn").disabled = !canRender;
   $("genImagesBtn").disabled = !hasScenes;
   if ($("genAllBtn")) $("genAllBtn").disabled = !hasScenes;
-  $("editorEmpty").classList.toggle("hidden", hasScenes);
-  $("editorTools").classList.toggle("hidden", !hasScenes);
+  // 분위기 모드는 가사 싱크가 없으므로 스탭2에 안내만 띄운다.
+  const ambientNotice = $("ambientSyncNotice");
+  if (ambient) {
+    if (ambientNotice) ambientNotice.classList.remove("hidden");
+    $("editorEmpty").classList.add("hidden");
+    $("editorTools").classList.add("hidden");
+  } else {
+    if (ambientNotice) ambientNotice.classList.add("hidden");
+    $("editorEmpty").classList.toggle("hidden", hasScenes);
+    $("editorTools").classList.toggle("hidden", !hasScenes);
+  }
   $("lineSummary").textContent = hasScenes
     ? `${scenes.length}줄 · ${timingOk ? "시간 정상" : "시간 확인 필요"}`
     : "0줄";
@@ -626,6 +639,93 @@ async function doAlign() {
   } finally {
     isAligning = false;
     $("alignBtn").textContent = "자동 정렬 시작";
+    updateActionState();
+  }
+}
+
+// ---- 분위기(ambient) 모드 — 가사 없이 목적만으로 배경 슬라이드쇼 ----
+function isAmbient() {
+  return mode === "ambient";
+}
+
+function setMode(next, save = true) {
+  mode = next === "ambient" ? "ambient" : "lyrics";
+  const ambient = isAmbient();
+  document.querySelectorAll(".mode-lyrics-only").forEach((el) => el.classList.toggle("hidden", ambient));
+  document.querySelectorAll(".mode-ambient-only").forEach((el) => el.classList.toggle("hidden", !ambient));
+  const banner = $("modeBannerName");
+  if (banner) banner.textContent = ambient ? "🌙 분위기 영상" : "🎤 가사 뮤직비디오";
+  updateActionState();
+  renderChapters(); // 스탭3 버튼(가사별 나누기·프롬프트·비트) 노출을 모드에 맞게 갱신
+  if (save) scheduleAutosave();
+}
+
+// 진입 화면(landing): 무엇을 만들지 먼저 고르고 스튜디오로 들어간다.
+function showModeLanding() {
+  $("modeLanding").classList.remove("hidden");
+}
+
+function chooseMode(next) {
+  setMode(next);
+  $("modeLanding").classList.add("hidden");
+  goStep(1);
+  showTutorial(false); // 처음 사용자면 튜토리얼 표시(이미 봤으면 자동 스킵)
+}
+
+async function doAmbient() {
+  const file = $("audioFile").files[0];
+  if (!file) return status("음원 파일을 선택하세요.", "err");
+  const mood = $("ambientMood").value.trim();
+  if (ambientPurpose === "custom" && !mood) {
+    return status("직접입력을 선택했으면 분위기 문구를 입력하세요.", "err");
+  }
+  const count = clampNumber($("sceneCount").value, 1, 30, 6);
+
+  const btn = $("ambientBtn");
+  btn.disabled = true;
+  btn.textContent = "만드는 중…";
+  busy("음원 길이에 맞춰 장면을 나누는 중입니다.");
+
+  const fd = new FormData();
+  fd.append("audio", file);
+  fd.append("purpose", ambientPurpose);
+  fd.append("mood", mood);
+  fd.append("count", String(count));
+  fd.append("style", $("imgStyle") ? $("imgStyle").value.trim() : "");
+
+  try {
+    const res = await fetch("/api/ambient", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+
+    audioId = data.audio_id;
+    scenes = normalizeScenes(data.scenes || []);
+    sectionsState = (data.sections || []).map((s) => ({
+      ...s, candidates: [], subtitle: false,
+    }));
+    audioLeadSec = 0;
+    audio.src = data.audio_url;
+    if (!$("songTitle").value.trim()) $("songTitle").value = defaultTitleText();
+    // 분위기 영상에 맞는 기본 연출: 자막 없음(심플)·크로스페이드·잔잔한 줌.
+    $("subtitleStyle").value = "simple";
+    $("karaokeToggle").checked = false;
+    $("transition").value = "crossfade";
+    if (Number($("kenBurns").value) === 0) $("kenBurns").value = 0.06;
+    updateFxLabels();
+    updateStylePreview();
+    stopAt = null;
+    renderRows();
+    renderSectionCards();
+    renderAnchor();
+    renderChapters();
+    resetHistory();
+    goStep(3);
+    status(`${scenes.length}개 장면을 만들었습니다. ‘전체 이미지 자동생성’으로 배경을 채우세요.`, "ok");
+  } catch (e) {
+    status("장면 생성 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "장면 만들기";
     updateActionState();
   }
 }
@@ -1048,7 +1148,9 @@ function syncSectionTimes() {
 
   const next = [];
   scenes.forEach((scene) => {
-    if (!String(scene.text || "").trim()) return;
+    // 가사 모드는 빈 줄을 건너뛴다. 분위기 모드는 장면 텍스트가 원래 비어 있으므로
+    // 건너뛰면 배경 슬롯이 통째로 사라진다 → 모드일 때는 모든 장면을 유지한다.
+    if (!isAmbient() && !String(scene.text || "").trim()) return;
     next.push(sectionFromScene(scene, next.length, previousByScene.get(scene.id)));
   });
   const changed = next.length !== sectionsState.length
@@ -1542,6 +1644,28 @@ $("previewRenderBtn").addEventListener("click", () => startRender(true));
 $("renderBtn").addEventListener("click", () => startRender(false));
 
 $("alignBtn").addEventListener("click", doAlign);
+$("ambientBtn").addEventListener("click", doAmbient);
+$("ambientToBgBtn").addEventListener("click", () => goStep(3));
+
+$("modeLanding").addEventListener("click", (e) => {
+  const card = e.target.closest(".mode-card");
+  if (card) chooseMode(card.dataset.mode);
+});
+$("changeModeBtn").addEventListener("click", showModeLanding);
+
+$("purposeChips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  ambientPurpose = chip.dataset.purpose || "meditation";
+  $("purposeChips").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === chip));
+  if (ambientPurpose === "custom") $("ambientMood").focus();
+  scheduleAutosave();
+});
+
+$("sceneCount").addEventListener("input", () => {
+  $("sceneCountVal").textContent = $("sceneCount").value;
+  scheduleAutosave();
+});
 
 window.addEventListener("beforeunload", (e) => {
   saveAutosaveNow();
@@ -1599,7 +1723,7 @@ function ensureTimelineSections() {
   if (!scenes.length) return false;
   if (!sectionsState.length) {
     sectionsState = scenes
-      .filter((scene) => String(scene.text || "").trim())
+      .filter((scene) => isAmbient() || String(scene.text || "").trim())
       .map((scene, index) => sectionFromScene(scene, index));
     return true;
   }
@@ -1614,7 +1738,8 @@ function timelineSectionForSceneIndex(sceneIndex, create = false) {
 
 function timelineLabel(scene, index) {
   const txt = String((scene && scene.text) || "").replace(/\s+/g, " ").trim();
-  return txt ? `${index + 1}. ${txt.slice(0, 38)}` : `${index + 1}. 빈 가사`;
+  if (txt) return `${index + 1}. ${txt.slice(0, 38)}`;
+  return isAmbient() ? `장면 ${index + 1}` : `${index + 1}. 빈 가사`;
 }
 
 function clampOutputIndex(index) {
@@ -2741,6 +2866,10 @@ function collectState() {
   return {
     audio_id: audioId,
     audio_url: audioId ? withBase(`/data/${audioId}`) : "",
+    mode,
+    ambient_purpose: ambientPurpose,
+    ambient_mood: $("ambientMood") ? $("ambientMood").value : "",
+    scene_count: Number($("sceneCount") ? $("sceneCount").value : 6) || 6,
     language: $("language").value,
     lyrics: $("lyrics").value,
     step: currentStep,            // 새로고침 후 같은 단계로 복원하기 위해 현재 단계 저장
@@ -2795,6 +2924,17 @@ function applyState(st) {
   useRef = st.use_ref !== false;
   $("lyrics").value = st.lyrics || "";
   $("language").value = st.language || "ko";
+  ambientPurpose = st.ambient_purpose || "meditation";
+  if ($("ambientMood")) $("ambientMood").value = st.ambient_mood || "";
+  if ($("sceneCount")) {
+    $("sceneCount").value = clampNumber(st.scene_count, 1, 30, 6);
+    $("sceneCountVal").textContent = $("sceneCount").value;
+  }
+  if ($("purposeChips")) {
+    $("purposeChips").querySelectorAll(".chip").forEach((c) =>
+      c.classList.toggle("active", c.dataset.purpose === ambientPurpose));
+  }
+  setMode(st.mode || "lyrics", false);
   if ($("titleLeadSec")) $("titleLeadSec").value = st.title_lead_sec || audioLeadSec || 3;
   if ($("endingTailSec")) $("endingTailSec").value = st.ending_tail_sec || 3;
   $("imgStyle").value = st.style || "";
@@ -2942,12 +3082,16 @@ function buildChapters() {
 function renderChapters() {
   const box = $("ytExport");
   if (!box) return;
+  const ambient = isAmbient();
   const ga = $("genAllBtn");
   if (ga) ga.classList.toggle("hidden", !scenes.length);
+  // 분위기 모드: 가사별 나누기·프롬프트 자동작성·비트 스냅은 가사 전용이라 숨긴다.
+  const gi = $("genImagesBtn");
+  if (gi) gi.classList.toggle("hidden", ambient);
   const ap = $("autoPromptBtn");
-  if (ap) ap.classList.toggle("hidden", !sectionsState.length);
+  if (ap) ap.classList.toggle("hidden", ambient || !sectionsState.length);
   const bs = $("beatSnapBtn");
-  if (bs) bs.classList.toggle("hidden", sectionsState.length < 2);
+  if (bs) bs.classList.toggle("hidden", ambient || sectionsState.length < 2);
   if (sectionsState.length) {
     box.classList.remove("hidden");
     $("chaptersBox").value = buildChapters();
@@ -3552,7 +3696,10 @@ if ($("railTimelineBtn")) {
 $("prevStep").addEventListener("click", () => goStep(currentStep - 1));
 $("nextStep").addEventListener("click", () => {
   if (currentStep === 1 && !scenes.length) {
-    return status("먼저 ‘자동 정렬 시작’으로 가사를 맞춰주세요.", "err");
+    return status(
+      isAmbient() ? "먼저 ‘장면 만들기’를 눌러 장면을 만들어 주세요." : "먼저 ‘자동 정렬 시작’으로 가사를 맞춰주세요.",
+      "err"
+    );
   }
   goStep(currentStep + 1);
 });
@@ -3637,7 +3784,7 @@ async function init() {
   const restored = restoreSession();
   if (!restored) {
     goStep(1);
-    showTutorial(false);
+    showModeLanding(); // 새 세션은 제작 모드부터 고른다(튜토리얼은 선택 후 표시)
   }
   if (location.hash === "#manual-editor" && scenes.length) enterManualEditor(false);
 }

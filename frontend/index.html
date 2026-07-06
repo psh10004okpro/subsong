@@ -8,7 +8,7 @@
   <link rel="shortcut icon" href="favicon.ico?v=20260630b" />
   <link rel="icon" type="image/png" href="favicon.png?v=20260630b" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260630b" />
-  <link rel="stylesheet" href="style.css?v=20260701d" />
+  <link rel="stylesheet" href="style.css?v=20260706b" />
 </head>
 <body class="theme-light">
   <header class="app-header">
@@ -118,10 +118,16 @@
     <section class="panel step active" id="step1" data-step="1">
       <div class="source-layout">
         <div class="source-card source-media">
+          <div class="mode-banner">
+            <span class="mode-banner-label">제작 모드</span>
+            <b id="modeBannerName">🎤 가사 뮤직비디오</b>
+            <button type="button" id="changeModeBtn" class="link-btn">다시 선택</button>
+          </div>
           <div class="section-title source-title">
             <span class="kicker">Step 1</span>
             <h2>소스 준비</h2>
-            <p>음원 파일과 줄 단위 가사를 넣으면 AI가 자동으로 가사를 분석하고 싱크를 맞춥니다.</p>
+            <p class="mode-lyrics-only">음원 파일과 줄 단위 가사를 넣으면 AI가 자동으로 가사를 분석하고 싱크를 맞춥니다.</p>
+            <p class="mode-ambient-only hidden">음원과 목적만 넣으면 가사 없이 분위기 배경 영상을 만듭니다. 명상·공부·수면 등에 적합합니다.</p>
           </div>
           <div class="field">
             <label for="audioFile">음원 파일</label>
@@ -131,7 +137,7 @@
               <small>선택하면 다음 단계 플레이어에서 미리 들을 수 있습니다.</small>
             </label>
           </div>
-          <div class="source-controls">
+          <div class="source-controls mode-lyrics-only">
             <label class="select-field" for="language">
               <span>언어</span>
               <select id="language">
@@ -142,13 +148,53 @@
             </label>
             <button type="button" id="alignBtn" class="primary">자동 정렬 시작</button>
           </div>
-          <aside class="notice">
+          <button type="button" id="ambientBtn" class="primary mode-ambient-only hidden">장면 만들기</button>
+          <aside class="notice mode-lyrics-only">
             <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
             <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠릅니다.</span>
           </aside>
+          <aside class="notice mode-ambient-only hidden">
+            <strong>가사 없이 분위기 영상을 만듭니다.</strong>
+            <span>음원 길이를 장면 수만큼 나눠 목적에 맞는 배경 이미지를 생성합니다. 다음 ‘배경’ 단계에서 이미지를 자동 생성하세요.</span>
+          </aside>
         </div>
 
-        <div class="source-card source-lyrics">
+        <!-- 분위기 모드: 목적/장면 수 -->
+        <div class="source-card source-ambient mode-ambient-only hidden">
+          <div class="source-card-head">
+            <div>
+              <span>분위기 선택</span>
+              <small>Ambient</small>
+            </div>
+          </div>
+          <div class="field">
+            <label>목적</label>
+            <div id="purposeChips" class="purpose-chips">
+              <button type="button" class="chip active" data-purpose="meditation">🧘 명상</button>
+              <button type="button" class="chip" data-purpose="study">📖 공부</button>
+              <button type="button" class="chip" data-purpose="sleep">🌙 수면</button>
+              <button type="button" class="chip" data-purpose="focus">🎯 집중</button>
+              <button type="button" class="chip" data-purpose="cafe">☕ 카페</button>
+              <button type="button" class="chip" data-purpose="nature">🌿 자연</button>
+              <button type="button" class="chip" data-purpose="lofi">🎧 로파이</button>
+              <button type="button" class="chip" data-purpose="custom">✎ 직접입력</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="ambientMood">분위기 문구 <small>(선택 · 직접입력 시 필수)</small></label>
+            <input type="text" id="ambientMood" placeholder="예: 따뜻한 노을, 잔잔한 파도, 겨울 밤 눈" />
+          </div>
+          <div class="field">
+            <div class="label-row">
+              <span class="field-label">장면 수 <small>(1 = 한 장 고정)</small></span>
+              <span id="sceneCountVal" class="muted">6</span>
+            </div>
+            <input type="range" id="sceneCount" min="1" max="20" step="1" value="6" />
+            <span class="muted">음원 길이를 이 개수만큼 나눠 배경이 천천히 바뀝니다.</span>
+          </div>
+        </div>
+
+        <div class="source-card source-lyrics mode-lyrics-only">
           <div class="source-card-head">
             <div>
               <span>가사 에디터</span>
@@ -178,6 +224,11 @@
       <div id="editorEmpty" class="empty-state">
         <strong>아직 정렬된 가사가 없습니다.</strong>
         <span>1단계에서 음원과 가사를 넣고 자동 정렬을 시작하면 줄 편집기가 열립니다.</span>
+      </div>
+      <div id="ambientSyncNotice" class="empty-state hidden">
+        <strong>분위기 모드에서는 가사 싱크가 필요 없습니다.</strong>
+        <span>‘배경’ 단계에서 목적에 맞는 배경 이미지를 자동 생성하세요.</span>
+        <button type="button" id="ambientToBgBtn" class="ghost">배경 단계로 이동 →</button>
       </div>
       <div id="editorTools" class="editor-tools hidden">
         <div class="toolbar">
@@ -567,6 +618,30 @@
     </div>
   </section>
 
+  <section id="modeLanding" class="mode-landing hidden" aria-label="제작 모드 선택">
+    <div class="mode-landing-inner">
+      <div class="mode-landing-head">
+        <span class="brand-mark" aria-hidden="true"><img src="assets/subsong-logo-192.png?v=20260630b" alt="" /></span>
+        <h1>무엇을 만들까요?</h1>
+        <p>제작 모드를 먼저 고르면 그에 맞는 작업 화면으로 들어갑니다. 언제든 ‘다시 선택’으로 바꿀 수 있어요.</p>
+      </div>
+      <div class="mode-cards">
+        <button type="button" class="mode-card" data-mode="lyrics">
+          <span class="mode-card-icon" aria-hidden="true">🎤</span>
+          <b>가사 뮤직비디오</b>
+          <span class="mode-card-desc">음원과 가사를 넣으면 AI가 자막을 싱크하고, 가사별 배경으로 뮤직비디오를 만듭니다.</span>
+          <span class="mode-card-cta">이걸로 만들기 →</span>
+        </button>
+        <button type="button" class="mode-card" data-mode="ambient">
+          <span class="mode-card-icon" aria-hidden="true">🌙</span>
+          <b>분위기 영상 <small>(가사 없음)</small></b>
+          <span class="mode-card-desc">명상·공부·수면 등 목적만 정하면, 목적에 맞는 배경이 흐르는 롱폼 영상을 만듭니다.</span>
+          <span class="mode-card-cta">이걸로 만들기 →</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <section id="tutorialOverlay" class="tutorial-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tutorialTitle">
     <div class="tutorial-card">
       <div class="tutorial-head">
@@ -595,6 +670,6 @@
 
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
   <div id="guideTip" class="guide-tip hidden" role="tooltip"></div>
-  <script src="app.js?v=20260701a"></script>
+  <script src="app.js?v=20260706b"></script>
 </body>
 </html>

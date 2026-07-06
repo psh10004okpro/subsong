@@ -61,6 +61,11 @@ def _probe_duration(path):
         return 0.0
 
 
+def probe_duration(path):
+    """음원/영상 길이(초). 실패 시 0.0. (분위기 모드 등 외부 호출용 공개 래퍼)"""
+    return _probe_duration(path)
+
+
 def _max_end(items):
     end = 0.0
     for item in items or []:
