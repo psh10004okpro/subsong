@@ -570,6 +570,13 @@ body.guide-mode a[data-guide]::after {
   font-weight: 700;
   font-size: 14px;
 }
+.mode-landing-foot {
+  margin-top: 22px;
+  text-align: center;
+}
+.mode-landing-foot .link-btn {
+  font-size: 14px;
+}
 .mode-banner {
   display: flex;
   align-items: center;

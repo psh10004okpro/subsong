@@ -661,8 +661,21 @@ function setMode(next, save = true) {
 }
 
 // 진입 화면(landing): 무엇을 만들지 먼저 고르고 스튜디오로 들어간다.
-function showModeLanding() {
+function showModeLanding(canContinue = false) {
+  const foot = $("modeLandingContinue");
+  if (foot) foot.classList.toggle("hidden", !canContinue);
   $("modeLanding").classList.remove("hidden");
+}
+
+// 자동저장된 이어서할 작업이 있는지(적용하지 않고 확인만).
+function hasRestorableSession() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null");
+    const st = saved && saved.state;
+    return !!(st && ((st.scenes || []).length || (st.lyrics || "").trim()));
+  } catch (e) {
+    return false;
+  }
 }
 
 function chooseMode(next) {
@@ -1651,7 +1664,10 @@ $("modeLanding").addEventListener("click", (e) => {
   const card = e.target.closest(".mode-card");
   if (card) chooseMode(card.dataset.mode);
 });
-$("changeModeBtn").addEventListener("click", showModeLanding);
+$("changeModeBtn").addEventListener("click", () => showModeLanding(hasRestorableSession()));
+$("continueWorkBtn").addEventListener("click", () => {
+  if (restoreSession()) $("modeLanding").classList.add("hidden");
+});
 
 $("purposeChips").addEventListener("click", (e) => {
   const chip = e.target.closest(".chip");
@@ -3781,12 +3797,13 @@ async function init() {
   renderChapters();
   updateStylePreview();
   refreshProjects();
-  const restored = restoreSession();
-  if (!restored) {
-    goStep(1);
-    showModeLanding(); // 새 세션은 제작 모드부터 고른다(튜토리얼은 선택 후 표시)
+  // 항상 진입 화면부터: 모드를 고르거나(새로 시작), 이전 작업이 있으면 이어서.
+  goStep(1);
+  showModeLanding(hasRestorableSession());
+  if (location.hash === "#manual-editor" && restoreSession()) {
+    $("modeLanding").classList.add("hidden");
+    if (scenes.length) enterManualEditor(false);
   }
-  if (location.hash === "#manual-editor" && scenes.length) enterManualEditor(false);
 }
 
 init();
