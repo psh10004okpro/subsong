@@ -1,16 +1,18 @@
-"""구간 묶기 + 이미지 후보 생성 서비스.
+"""가사별 배경 슬롯 + 이미지 후보 생성 서비스.
 
 흐름:
-  1) group_only: 장면 → 구간(section) 묶기 (이미지는 아직 안 만듦)
-  2) generate_candidates: 한 구간 프롬프트로 후보 N장 생성 → 사용자가 1장 선택
+  1) group_only: 장면 → 가사별 배경 슬롯(section) 만들기 (이미지는 아직 안 만듦)
+  2) generate_candidates: 한 슬롯 프롬프트로 선택한 프록시 이미지 생성
 """
 import os
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw
 
 from . import face as face_mod
+from . import prompts as prompts_mod
 from . import sections as sections_mod
 from .providers import get_image_provider
 from .providers.placeholder_provider import _font, _wrap
@@ -20,27 +22,43 @@ def group_only(scenes, style="", gap=1.6):
     return sections_mod.group(scenes, style, gap=gap)
 
 
+_HANGUL_RE = re.compile(r"[\uac00-\ud7a3\u3131-\u318e\u1100-\u11ff]")
+
+
+def _prompt_for_generation(prompt):
+    """UI에는 한글 프롬프트를 보존하고, 생성 API에는 필요할 때만 영어로 변환."""
+    prompt = (prompt or "").strip()
+    if not prompt or not _HANGUL_RE.search(prompt):
+        return prompt
+    positive, _negative = prompts_mod.adapt(prompt)
+    return positive or prompt
+
+
 def generate_candidates(prompt, out_dir, count=4, aspect="16:9", label="",
                         ref_image_id=None, provider=None):
-    """한 프롬프트로 후보 이미지 count장을 병렬 생성한다.
+    """한 프롬프트로 이미지 count장을 생성한다.
 
     ref_image_id: 일관성 유지를 위한 참조(앵커) 이미지. 있으면 i2i로 전달.
     각 결과에 얼굴 감지 결과(has_face)를 함께 담는다.
     """
     prov = get_image_provider(provider)
+    generate_prompt = _prompt_for_generation(prompt)
     count = max(1, min(int(count), 8))
 
     ref_path = os.path.join(out_dir, ref_image_id) if ref_image_id else None
     if ref_path and not os.path.exists(ref_path):
         ref_path = None
 
+    errors = []
+
     def one(i):
         image_id = uuid.uuid4().hex + ".png"
         path = os.path.join(out_dir, image_id)
         try:
-            prov.generate(prompt, path, aspect=aspect, label=label,
+            prov.generate(generate_prompt, path, aspect=aspect, label=label,
                           seed=1000 + i, ref_image=ref_path)
-        except Exception:
+        except Exception as exc:
+            errors.append(str(exc))
             # 후보 하나가 실패해도 나머지는 살린다.
             try:
                 if os.path.exists(path):
@@ -58,7 +76,8 @@ def generate_candidates(prompt, out_dir, count=4, aspect="16:9", label="",
     with ThreadPoolExecutor(max_workers=min(count, 4)) as ex:
         results = [c for c in ex.map(one, range(count)) if c]
     if not results:
-        raise RuntimeError("이미지 생성에 모두 실패했습니다. 잠시 후 다시 시도하세요.")
+        detail = errors[-1] if errors else "알 수 없는 오류"
+        raise RuntimeError(f"이미지 생성에 모두 실패했습니다: {detail}")
     return results
 
 

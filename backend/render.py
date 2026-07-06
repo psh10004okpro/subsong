@@ -18,6 +18,12 @@ ASPECTS = {
     "1:1": (1080, 1080),
 }
 
+PREVIEW_ASPECTS = {
+    "16:9": (960, 540),
+    "9:16": (540, 960),
+    "1:1": (720, 720),
+}
+
 _VIDEO_EXT = {".mp4", ".mov", ".webm", ".mkv", ".m4v"}
 
 
@@ -27,8 +33,8 @@ def _is_video(path):
 
 def _fit(w, h):
     return (
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+        f"crop={w}:{h},setsar=1"
     )
 
 
@@ -55,7 +61,48 @@ def _probe_duration(path):
         return 0.0
 
 
-def _cmd_single(audio_path, background_path, ass_name, w, h, bg_color, fade=""):
+def _max_end(items):
+    end = 0.0
+    for item in items or []:
+        try:
+            end = max(end, float(item.get("end") or 0.0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return end
+
+
+def _padded_audio(audio_path, out_dir, lead, total):
+    """앞 무음(lead)과 뒤 무음을 붙인 임시 오디오를 만든다."""
+    original = _probe_duration(audio_path)
+    lead = max(0.0, float(lead or 0.0))
+    total = max(original + lead, float(total or 0.0))
+    tail = max(0.0, total - lead - original)
+    if lead < 0.01 and tail < 0.01:
+        return audio_path, None
+
+    out = os.path.join(out_dir, f"{uuid.uuid4().hex}.m4a")
+    lead_ms = max(0, round(lead * 1000))
+    af = f"adelay={lead_ms}:all=1,apad=pad_dur={round(tail, 3)}"
+    cmd = [
+        "ffmpeg", "-y", "-i", audio_path,
+        "-af", af,
+        "-t", f"{round(total, 3)}",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-loglevel", "error",
+        out,
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return out, out
+
+
+def _ass_filter(ass_name, out_dir):
+    """ASS 필터 문자열. 업로드 폰트가 있으면 libass에 fontsdir를 알려준다."""
+    if os.path.isdir(os.path.join(out_dir, "fonts")):
+        return f"ass={ass_name}:fontsdir=fonts"
+    return f"ass={ass_name}"
+
+
+def _cmd_single(audio_path, background_path, ass_filter, w, h, bg_color, fade=""):
     cmd = ["ffmpeg", "-y"]
     if background_path and os.path.exists(background_path):
         ext = os.path.splitext(background_path)[1].lower()
@@ -65,14 +112,14 @@ def _cmd_single(audio_path, background_path, ass_name, w, h, bg_color, fade=""):
             cmd += ["-loop", "1", "-i", background_path]
     else:
         cmd += ["-f", "lavfi", "-i", f"color=c={bg_color}:s={w}x{h}:r=30"]
-    vf = f"{_fit(w, h)},ass={ass_name}"
+    vf = f"{_fit(w, h)},{ass_filter}"
     if fade:
         vf += f",{fade}"
     cmd += ["-i", audio_path, "-map", "0:v", "-map", "1:a", "-vf", vf]
     return cmd
 
 
-def _cmd_sections(audio_path, seg_bgs, ass_name, w, h, fade=""):
+def _cmd_sections(audio_path, seg_bgs, ass_filter, w, h, fade=""):
     """구간별 이미지를 [0, 곡 길이] 전체에 타일처럼 이어 붙인 배경 + ASS 자막."""
     duration = _probe_duration(audio_path) or seg_bgs[-1]["end"]
     seg_bgs = sorted(seg_bgs, key=lambda s: float(s["start"]))
@@ -98,7 +145,7 @@ def _cmd_sections(audio_path, seg_bgs, ass_name, w, h, fade=""):
         fc += f"[{k}:v]{_fit(w, h)},fps=30[v{k}];"
     fc += "".join(f"[v{k}]" for k in range(n))
     fc += f"concat=n={n}:v=1:a=0[bg];"
-    tail = f"ass={ass_name}"
+    tail = ass_filter
     if fade:
         tail += f",{fade}"
     fc += f"[bg]{tail}[v]"
@@ -107,7 +154,7 @@ def _cmd_sections(audio_path, seg_bgs, ass_name, w, h, fade=""):
     return cmd
 
 
-def _cmd_sections_fx(audio_path, seg_bgs, ass_name, w, h, total,
+def _cmd_sections_fx(audio_path, seg_bgs, ass_filter, w, h, total,
                      transition, trans_dur, ken_burns, fade=""):
     """구간 배경에 연출(크로스페이드/Ken Burns)을 입힌 합성 명령.
 
@@ -187,7 +234,7 @@ def _cmd_sections_fx(audio_path, seg_bgs, ass_name, w, h, total,
         fc += "".join(f"[v{k}]" for k in range(n))
         fc += f"concat=n={n}:v=1:a=0[bg];"
 
-    tail = f"ass={ass_name}"
+    tail = ass_filter
     if fade:
         tail += f",{fade}"
     fc += f"[bg]{tail}[v]"
@@ -208,6 +255,10 @@ def render(
     font_size: int = 48,
     subtitle_style: str = "ballad",
     subtitle_pos: str = "bottom",
+    subtitle_align: str = "center",
+    subtitle_offset_x: float = 0.0,
+    subtitle_offset_y: float = 0.0,
+    karaoke_enabled: bool = False,  # True면 단어별 \kf 하이라이트 사용
     transition: str = "none",      # "none"(하드컷) | "crossfade"
     transition_dur: float = 0.8,   # 크로스페이드 길이(초)
     ken_burns: float = 0.0,        # 0=정지, 0.06~0.10=약한 줌
@@ -215,28 +266,54 @@ def render(
     outro_fade: float = 0.0,       # 0=없음, 아웃트로 페이드아웃(초)
     intro_title: str = "",         # 인트로 타이틀 카드 문구(빈 값=없음)
     intro_title_dur: float = 3.0,  # 타이틀 카드 표시 길이(초)
+    outro_title: str = "",         # 마지막 타이틀 카드 문구(빈 값=없음)
+    outro_title_dur: float = 3.0,  # 마지막 타이틀 카드 표시 길이(초)
+    audio_delay_sec: float = 0.0,  # 영상 시작 후 실제 음원이 시작되는 시간(앞 무음)
     text_color: str = "",          # 자막 기본 글자색(빈 값=프리셋)
     hi_color: str = "",            # 강조(부르는 단어) 색
     outline_color: str = "",       # 외곽선 색
+    preview: bool = False,         # True면 빠른 확인용 저해상도 MP4
     job=None,
     progress_range=(0.0, 1.0),
 ) -> str:
-    w, h = ASPECTS.get(aspect, (1920, 1080))
+    full_w, full_h = ASPECTS.get(aspect, (1920, 1080))
+    if preview:
+        w, h = PREVIEW_ASPECTS.get(aspect, (960, 540))
+        render_scale = min(w / full_w, h / full_h)
+    else:
+        w, h = full_w, full_h
+        render_scale = 1.0
     os.makedirs(out_dir, exist_ok=True)
 
+    audio_delay_sec = max(0.0, float(audio_delay_sec or 0.0))
+    audio_total = _probe_duration(audio_path)
+    requested_total = max(
+        audio_total + audio_delay_sec,
+        _max_end(scenes),
+        _max_end(sections),
+    )
+    render_audio_path, temp_audio_path = _padded_audio(audio_path, out_dir, audio_delay_sec, requested_total)
+    total = _probe_duration(render_audio_path) or requested_total
     # ASS 문자열을 먼저 만든다(여기서 실패하면 파일을 만들지 않음 → 누수 방지).
     ass_text = ass_mod.build_ass(scenes, w, h, subtitle_style, font=font,
                                  font_size=font_size, position=subtitle_pos,
+                                 text_align=subtitle_align,
+                                 offset_x=subtitle_offset_x,
+                                 offset_y=subtitle_offset_y,
+                                 karaoke_enabled=karaoke_enabled,
                                  intro_title=intro_title, intro_title_dur=intro_title_dur,
+                                 outro_title=outro_title, outro_title_dur=outro_title_dur,
+                                 total_duration=total,
                                  text_color=text_color, hi_color=hi_color,
-                                 outline_color=outline_color)
+                                 outline_color=outline_color,
+                                 render_scale=render_scale)
     ass_name = f"{uuid.uuid4().hex}.ass"
     out_name = f"{uuid.uuid4().hex}.mp4"
     ass_path = os.path.join(out_dir, ass_name)
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(ass_text)
+    ass_filter = _ass_filter(ass_name, out_dir)
 
-    total = _probe_duration(audio_path)
     fade = _fade_str(total, intro_fade, outro_fade)
 
     seg_bgs = [
@@ -246,24 +323,29 @@ def render(
     # 연출 ON(전환 또는 켄번즈) + 구간 2개 이상일 때만 fx 경로. 그 외엔 기존 경로(+페이드).
     fx_on = (transition != "none" or (ken_burns or 0) > 0) and len(seg_bgs) >= 2
     if seg_bgs and fx_on:
-        cmd = _cmd_sections_fx(audio_path, seg_bgs, ass_name, w, h, total,
+        cmd = _cmd_sections_fx(render_audio_path, seg_bgs, ass_filter, w, h, total,
                                transition, transition_dur, ken_burns, fade)
     elif seg_bgs:
-        cmd = _cmd_sections(audio_path, seg_bgs, ass_name, w, h, fade)
+        cmd = _cmd_sections(render_audio_path, seg_bgs, ass_filter, w, h, fade)
     else:
-        cmd = _cmd_single(audio_path, background_path, ass_name, w, h, bg_color, fade)
+        cmd = _cmd_single(render_audio_path, background_path, ass_filter, w, h, bg_color, fade)
+
+    if preview:
+        preset, crf, audio_br = "veryfast", "28", "160k"
+    else:
+        preset, crf, audio_br = "medium", "20", "384k"
 
     cmd += [
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-c:v", "libx264", "-preset", preset, "-crf", crf,
         "-profile:v", "high", "-bf", "2",
         "-pix_fmt", "yuv420p", "-r", "30",
-        "-c:a", "aac", "-b:a", "384k", "-ar", "48000",
+        "-c:a", "aac", "-b:a", audio_br, "-ar", "48000",
         "-shortest", "-movflags", "+faststart",
         "-progress", "pipe:1", "-nostats", "-loglevel", "error",
         out_name,
     ]
 
-    total = _probe_duration(audio_path)
+    total = _probe_duration(render_audio_path)
     proc = subprocess.Popen(cmd, cwd=out_dir, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True,
                             encoding="utf-8", errors="replace")
@@ -297,6 +379,11 @@ def render(
         os.remove(ass_path)
     except OSError:
         pass
+    if temp_audio_path:
+        try:
+            os.remove(temp_audio_path)
+        except OSError:
+            pass
 
     out_path = os.path.join(out_dir, out_name)
     if job is not None and job.cancelled:

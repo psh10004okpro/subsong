@@ -1,7 +1,7 @@
 """가사 → 이미지 프롬프트 자동작성.
 
 마브 `/v1/prompt-adapter`(한→영 프롬프트 LLM)로 구간 가사+스타일을 받아
-영화 같은 영어 이미지 프롬프트(+네거티브)를 만든다. 실패 시 입력 그대로 폴백.
+생성 직전에 쓸 영어 이미지 프롬프트(+네거티브)를 만든다. 실패 시 입력 그대로 폴백.
 가사 자체는 절대 바꾸지 않는다 — '배경 그림 설명'만 생성.
 """
 import os
@@ -42,17 +42,17 @@ def adapt(prompt_ko: str):
 
 
 def auto_prompts(items, style=""):
-    """items: [{label, base}] → [{positive, negative}] 병렬 변환.
+    """items: [{label, base}] → 화면 표시용 한글 프롬프트 초안.
 
-    base(구간 가사)와 style(전체 분위기)을 합쳐 어댑터에 넘긴다.
+    실제 생성 API로 보내는 영어 변환은 generate_candidates 단계에서 수행한다.
+    그래야 Step 3 입력칸은 계속 한글로 유지된다.
     """
     style = (style or "").strip()
 
     def one(it):
         base = (it.get("base") or "").strip() or (it.get("label") or "")
         ko = f"{style}, {base}" if style else base
-        pos, neg = adapt(ko)
-        return {"positive": pos, "negative": neg}
+        return {"positive": ko, "negative": ""}
 
     if not items:
         return []

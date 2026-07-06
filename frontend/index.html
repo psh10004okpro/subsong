@@ -4,36 +4,47 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>subsong · AI 뮤직비디오 스튜디오</title>
-  <link rel="stylesheet" href="style.css?v=20260627" />
+  <link rel="icon" href="favicon.ico?v=20260630b" sizes="any" />
+  <link rel="shortcut icon" href="favicon.ico?v=20260630b" />
+  <link rel="icon" type="image/png" href="favicon.png?v=20260630b" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260630b" />
+  <link rel="stylesheet" href="style.css?v=20260701d" />
 </head>
-<body>
+<body class="theme-light">
   <header class="app-header">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">S</span>
+      <span class="brand-mark" aria-hidden="true"><img src="assets/subsong-logo-192.png?v=20260630b" alt="" /></span>
       <div>
         <h1>subsong 스튜디오</h1>
         <p>음원과 가사로 자막·배경이 들어간 뮤직비디오를 만듭니다</p>
       </div>
     </div>
+    <ol class="steps" id="stepTabs" aria-label="작업 단계">
+      <li data-step="1" class="active" tabindex="0" role="button" aria-current="step"><span>1</span>소스</li>
+      <li data-step="2" tabindex="0" role="button"><span>2</span>싱크</li>
+      <li data-step="3" tabindex="0" role="button"><span>3</span>배경</li>
+      <li data-step="4" tabindex="0" role="button"><span>4</span>출력</li>
+    </ol>
     <div class="header-right">
-      <button type="button" id="undoBtn" class="mini-btn" title="되돌리기 (Ctrl+Z)" disabled>↶ 되돌리기</button>
-      <button type="button" id="redoBtn" class="mini-btn" title="다시하기 (Ctrl+Shift+Z)" disabled>↷</button>
       <span id="saveState" class="save-state"><span class="dot"></span>자동 저장됨</span>
+      <label class="theme-field" for="themeSelect">
+        <span>테마</span>
+        <select id="themeSelect" aria-label="화면 테마">
+          <option value="light" selected>화이트</option>
+          <option value="dark">블랙</option>
+        </select>
+      </label>
       <select id="projectSelect" aria-label="저장된 프로젝트">
         <option value="">저장된 프로젝트…</option>
       </select>
       <button type="button" id="loadProjectBtn" class="mini-btn">불러오기</button>
-      <button type="button" id="deleteProjectBtn" class="mini-btn">삭제</button>
       <button type="button" id="saveProjectBtn" class="mini-btn">저장</button>
+      <button type="button" id="deleteProjectBtn" class="mini-btn">삭제</button>
+      <button type="button" id="undoBtn" class="mini-btn" title="되돌리기 (Ctrl+Z)" disabled>↶</button>
+      <button type="button" id="redoBtn" class="mini-btn" title="다시하기 (Ctrl+Shift+Z)" disabled>↷</button>
+      <button type="button" id="guideToggle" class="mini-btn guide-btn" aria-pressed="false">? 가이드</button>
     </div>
   </header>
-
-  <ol class="steps" id="stepTabs" aria-label="작업 단계">
-    <li data-step="1" class="active" tabindex="0" role="button" aria-current="step"><span>1</span>소스</li>
-    <li data-step="2" tabindex="0" role="button"><span>2</span>싱크</li>
-    <li data-step="3" tabindex="0" role="button"><span>3</span>배경</li>
-    <li data-step="4" tabindex="0" role="button"><span>4</span>출력</li>
-  </ol>
 
   <div id="restoreBar" class="restore-bar hidden">
     <span id="restoreInfo"></span>
@@ -44,8 +55,38 @@
   </div>
 
   <main class="studio">
+    <aside class="studio-rail" aria-label="작업 바로가기">
+      <div class="rail-steps">
+        <button type="button" class="rail-item active" data-rail-step="1" aria-current="step">
+          <span class="rail-icon" aria-hidden="true">▦</span>
+          <span>소스</span>
+        </button>
+        <button type="button" class="rail-item" data-rail-step="2">
+          <span class="rail-icon" aria-hidden="true">◷</span>
+          <span>싱크</span>
+        </button>
+        <button type="button" class="rail-item" data-rail-step="3">
+          <span class="rail-icon" aria-hidden="true">▧</span>
+          <span>배경</span>
+        </button>
+        <button type="button" class="rail-item" data-rail-step="4">
+          <span class="rail-icon" aria-hidden="true">⇧</span>
+          <span>출력</span>
+        </button>
+      </div>
+      <div class="rail-quick">
+        <button type="button" id="railPreviewBtn" class="rail-small">▶ 미리보기</button>
+        <button type="button" id="railTimelineBtn" class="rail-small">☰ 타임라인</button>
+      </div>
+    </aside>
+
     <!-- 공용 미리보기 + 플레이어 (싱크·배경·출력 단계에서 표시) -->
+    <span id="stageHome" hidden></span>
     <section class="stage hidden" id="stage">
+      <div class="stage-head">
+        <span>미리보기</span>
+        <small id="stageMode">Live</small>
+      </div>
       <div class="preview-wrap">
         <div id="preview" class="preview">
           <div id="previewBg" class="preview-bg"></div>
@@ -62,49 +103,69 @@
           <small id="audioMeta">음원을 선택하면 재생할 수 있습니다.</small>
         </div>
       </div>
+      <div class="stage-timeline hidden" id="stageTimeline">
+        <div class="stage-timeline-head">
+          <span>클립 타임라인</span>
+          <small id="stageTimelineInfo">0줄</small>
+        </div>
+        <div class="stage-timeline-scroll">
+          <div id="stageTimelineTrack" class="stage-timeline-track"></div>
+        </div>
+      </div>
     </section>
 
     <!-- 1. 소스 -->
     <section class="panel step active" id="step1" data-step="1">
-      <div class="section-title">
-        <span class="kicker">Step 1</span>
-        <h2>소스 준비</h2>
-        <p>음원 파일과 줄 단위 가사를 넣으면 각 줄의 시작/끝 시간을 자동으로 맞춥니다.</p>
-      </div>
-      <div class="field">
-        <label for="audioFile">음원 파일</label>
-        <label class="file-pick" for="audioFile">
-          <input type="file" id="audioFile" accept="audio/*" />
-          <span id="audioName">MP3, WAV 등 오디오 파일 선택</span>
-          <small>선택하면 다음 단계 플레이어에서 미리 들을 수 있습니다.</small>
-        </label>
-      </div>
-      <div class="field">
-        <div class="label-row">
-          <label for="lyrics">가사</label>
-          <button type="button" id="sampleBtn" class="link-btn">예시 채우기</button>
+      <div class="source-layout">
+        <div class="source-card source-media">
+          <div class="section-title source-title">
+            <span class="kicker">Step 1</span>
+            <h2>소스 준비</h2>
+            <p>음원 파일과 줄 단위 가사를 넣으면 AI가 자동으로 가사를 분석하고 싱크를 맞춥니다.</p>
+          </div>
+          <div class="field">
+            <label for="audioFile">음원 파일</label>
+            <label class="file-pick" for="audioFile">
+              <input type="file" id="audioFile" accept="audio/*" />
+              <span id="audioName">MP3, WAV 등 오디오 파일 선택</span>
+              <small>선택하면 다음 단계 플레이어에서 미리 들을 수 있습니다.</small>
+            </label>
+          </div>
+          <div class="source-controls">
+            <label class="select-field" for="language">
+              <span>언어</span>
+              <select id="language">
+                <option value="ko" selected>한국어</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+              </select>
+            </label>
+            <button type="button" id="alignBtn" class="primary">자동 정렬 시작</button>
+          </div>
+          <aside class="notice">
+            <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
+            <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠릅니다.</span>
+          </aside>
         </div>
-        <textarea id="lyrics" rows="12" placeholder="어두운 밤하늘 아래&#10;너의 이름을 불러본다&#10;바람이 스쳐 지나가도"></textarea>
-        <div class="field-footer">
-          <span id="lyricStats">0줄 · 0자</span>
-          <span>빈 줄·[구간 표시]는 제외하고 정렬합니다.</span>
+
+        <div class="source-card source-lyrics">
+          <div class="source-card-head">
+            <div>
+              <span>가사 에디터</span>
+              <small>Lyrics</small>
+            </div>
+            <button type="button" id="sampleBtn" class="link-btn">예시 채우기</button>
+          </div>
+          <div class="field lyrics-field">
+            <label for="lyrics">가사 입력</label>
+            <textarea id="lyrics" rows="12" placeholder="어두운 밤하늘 아래&#10;너의 이름을 불러본다&#10;바람이 스쳐 지나가도"></textarea>
+            <div class="field-footer">
+              <span id="lyricStats">0줄 · 0자</span>
+              <span>빈 줄·[구간 표시]는 제외하고 정렬합니다.</span>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="control-row">
-        <label class="select-field" for="language">
-          <span>언어</span>
-          <select id="language">
-            <option value="ko" selected>한국어</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-          </select>
-        </label>
-        <button type="button" id="alignBtn" class="primary">자동 정렬 시작</button>
-      </div>
-      <aside class="notice">
-        <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
-        <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠릅니다.</span>
-      </aside>
     </section>
 
     <!-- 2. 싱크 -->
@@ -121,11 +182,25 @@
       <div id="editorTools" class="editor-tools hidden">
         <div class="toolbar">
           <span id="lineSummary">0줄</span>
-          <button type="button" id="addRow" class="ghost">줄 추가</button>
+          <span class="toolbar-actions">
+            <label class="special-time-field" for="titleLeadSec">
+              <span>타이틀 앞</span>
+              <input type="number" id="titleLeadSec" min="0.5" max="30" step="0.5" value="3" />
+            </label>
+            <label class="special-time-field" for="endingTailSec">
+              <span>엔딩 뒤</span>
+              <input type="number" id="endingTailSec" min="0.5" max="60" step="0.5" value="3" />
+            </label>
+            <button type="button" id="autoTwoLineBtn" class="ghost">2줄 자동</button>
+            <button type="button" id="autoOneLineBtn" class="ghost">1줄 자동</button>
+            <button type="button" id="addTitleRow" class="ghost">타이틀 추가</button>
+            <button type="button" id="addEndingRow" class="ghost">엔딩 추가</button>
+            <button type="button" id="addRow" class="ghost">줄 추가</button>
+          </span>
         </div>
         <div class="sync-table">
           <div class="listhead" aria-hidden="true">
-            <span>#</span><span>시작</span><span>끝</span><span>가사</span><span>동작</span>
+            <span>#</span><span>시작</span><span>끝</span><span>가사</span>
           </div>
           <div id="lines"></div>
         </div>
@@ -137,7 +212,7 @@
       <div class="section-title compact">
         <span class="kicker">Step 3</span>
         <h2>배경 이미지</h2>
-        <p>구간을 나눈 뒤 구간마다 AI로 생성하거나 직접 이미지를 올립니다. 미리보기에 바로 반영됩니다.</p>
+        <p>가사 한 줄마다 배경 이미지/영상을 따로 지정합니다. 미리보기에 바로 반영됩니다.</p>
       </div>
       <div class="field">
         <div class="label-row">
@@ -145,12 +220,19 @@
           <span class="img-actions">
             <button type="button" id="autoPromptBtn" class="link-btn hidden">✨ 프롬프트 자동작성</button>
             <button type="button" id="beatSnapBtn" class="link-btn hidden">🥁 비트에 맞추기</button>
-            <button type="button" id="genAllBtn" class="link-btn hidden">전체 생성</button>
-            <button type="button" id="genImagesBtn" class="link-btn" disabled>구간 나누기</button>
+            <button type="button" id="genAllBtn" class="link-btn hidden">전체 이미지 자동생성</button>
+            <button type="button" id="genImagesBtn" class="link-btn" disabled>가사별 나누기</button>
           </span>
         </div>
         <input type="text" id="imgStyle" placeholder="예: 쓸쓸한 밤, 영화같은, 푸른 톤" />
-        <label class="gap-field" for="gapThreshold">
+        <label class="provider-field" for="imageProvider">
+          <span>이미지 생성기</span>
+          <select id="imageProvider">
+            <option value="chatgpt_proxy" selected>GPT-Image-2</option>
+            <option value="nanobanana_proxy">나노바나나</option>
+          </select>
+        </label>
+        <label class="gap-field hidden" for="gapThreshold">
           <span>구간 분할 간격 <small>([구간]라벨 없을 때, 이 초 이상 비면 새 구간)</small></span>
           <input type="number" id="gapThreshold" min="0.4" max="5" step="0.2" value="1.6" />
         </label>
@@ -158,19 +240,24 @@
           <div class="anchor-thumb" id="anchorThumb"></div>
           <div class="anchor-info">
             <b id="anchorLabel">참조 없음</b>
-            <small id="anchorHint">이미지를 고르면 자동으로 참조가 됩니다.</small>
+            <small id="anchorHint">참조 이미지를 먼저 생성하거나 업로드할 수 있습니다.</small>
           </div>
           <label class="anchor-toggle" title="이후 생성에 참조 적용">
             <input type="checkbox" id="useRefChk" checked /><span>참조 적용</span>
           </label>
-          <button type="button" id="clearAnchorBtn" class="mini-btn">해제</button>
+          <div class="anchor-actions">
+            <button type="button" id="genAnchorBtn" class="mini-btn">참조 생성</button>
+            <button type="button" id="uploadAnchorBtn" class="mini-btn">참조 업로드</button>
+            <button type="button" id="clearAnchorBtn" class="mini-btn">해제</button>
+            <input type="file" id="anchorFile" accept="image/*" hidden />
+          </div>
         </div>
         <div id="genAllProgress" class="render-progress hidden">
           <div class="bar"><div id="genAllBar" class="bar-fill"></div></div>
           <div class="render-progress-row"><span id="genAllPct">0%</span></div>
         </div>
         <div id="sections" class="sections"></div>
-        <span class="muted">구간별로 ‘AI 4장’ 또는 ‘업로드’(이미지·영상)로 배경을 정합니다. 구간마다 이미지·영상을 섞을 수 있습니다.</span>
+        <span class="muted">가사별로 GPT 또는 나노바나나를 선택해 배경을 생성하거나 직접 업로드합니다. 줄마다 이미지·영상을 섞을 수 있습니다.</span>
       </div>
     </section>
 
@@ -209,17 +296,36 @@
             <option value="top">상단</option>
           </select>
         </label>
-        <label class="field" for="fontSelect">
-          <span class="field-label">자막 폰트</span>
-          <select id="fontSelect">
-            <option value="Malgun Gothic" selected>맑은 고딕</option>
-            <option value="NanumGothic">나눔고딕</option>
-            <option value="Noto Sans KR">본고딕 (Noto Sans KR)</option>
-            <option value="Noto Serif KR">본명조 (Noto Serif KR)</option>
-            <option value="Gulim">굴림</option>
-            <option value="Batang">바탕</option>
+        <label class="field" for="subtitleAlign">
+          <span class="field-label">자막 정렬</span>
+          <select id="subtitleAlign">
+            <option value="center" selected>가운데</option>
+            <option value="left">왼쪽</option>
           </select>
         </label>
+        <label class="field subtitle-offset-field" for="subtitleOffsetX">
+          <span class="field-label">좌우 이동 <small>(px)</small></span>
+          <input type="number" id="subtitleOffsetX" min="-600" max="600" step="1" value="0" />
+        </label>
+        <label class="field subtitle-offset-field" for="subtitleOffsetY">
+          <span class="field-label">상하 이동 <small>(px)</small></span>
+          <input type="number" id="subtitleOffsetY" min="-600" max="600" step="1" value="0" />
+        </label>
+        <div class="field font-field">
+          <span class="field-label">자막 폰트</span>
+          <div class="font-row">
+            <select id="fontSelect">
+              <option value="Malgun Gothic" selected>맑은 고딕</option>
+              <option value="NanumGothic">나눔고딕</option>
+              <option value="Noto Sans KR">본고딕 (Noto Sans KR)</option>
+              <option value="Noto Serif KR">본명조 (Noto Serif KR)</option>
+              <option value="Gulim">굴림</option>
+              <option value="Batang">바탕</option>
+            </select>
+            <button type="button" id="fontUploadBtn" class="mini-btn">추가</button>
+            <input type="file" id="fontFile" accept=".ttf,.otf,.ttc,font/ttf,font/otf" hidden />
+          </div>
+        </div>
         <label class="field color-field" for="bgColor">
           <span class="field-label">배경색 <small>(이미지 없을 때)</small></span>
           <input type="color" id="bgColor" value="#101114" />
@@ -229,8 +335,8 @@
       <div class="field">
         <span class="field-label">자막 스타일</span>
         <select id="subtitleStyle">
-          <option value="ballad" selected>발라드 · 단어 하이라이트</option>
-          <option value="kpop">K-pop · 강조</option>
+          <option value="ballad" selected>발라드</option>
+          <option value="kpop">K-pop</option>
           <option value="citypop">시티팝</option>
           <option value="simple">심플 · 하이라이트 없음</option>
         </select>
@@ -241,6 +347,10 @@
           <label class="color-pick">외곽선<input type="color" id="outlineColor" value="#101010" /></label>
           <button type="button" id="resetColors" class="link-btn">프리셋 색으로</button>
         </div>
+        <label class="also-shorts">
+          <input type="checkbox" id="karaokeToggle" />
+          <span>노래방 단어 색상 <small>(재생 위치에 따라 강조)</small></span>
+        </label>
       </div>
 
       <div class="field">
@@ -270,17 +380,23 @@
           <label class="also-shorts"><input type="checkbox" id="introTitle" /><span>인트로 타이틀 카드 <small>(‘영상 제목’ 표시)</small></span></label>
           <span class="inline-lens">길이 <input type="number" id="introTitleDur" min="1" max="8" step="0.5" value="3" />s</span>
         </div>
+        <div class="opt-row">
+          <label class="also-shorts"><input type="checkbox" id="outroTitle" /><span>마지막 타이틀 카드 <small>(‘영상 제목’ 표시)</small></span></label>
+          <span class="inline-lens">길이 <input type="number" id="outroTitleDur" min="1" max="8" step="0.5" value="3" />s</span>
+        </div>
       </div>
 
       <div class="field">
-        <label for="bgFile">공통 배경 이미지/영상 <small>(구간 미설정 시)</small></label>
+        <label for="bgFile">공통 배경 이미지/영상 <small>(가사별 배경 미설정 시)</small></label>
         <input type="file" id="bgFile" accept="image/*,video/*" />
-        <span id="bgName" class="muted">선택하지 않으면 구간 이미지 또는 배경색을 씁니다.</span>
+        <span id="bgName" class="muted">선택하지 않으면 가사별 이미지 또는 배경색을 씁니다.</span>
       </div>
 
       <div class="actions">
         <button type="button" id="srtBtn" class="ghost" disabled>SRT 내보내기</button>
-        <button type="button" id="renderBtn" class="primary" disabled>MP4 만들기</button>
+        <button type="button" id="manualEditBtn" class="ghost" disabled>수동 편집</button>
+        <button type="button" id="previewRenderBtn" class="ghost" disabled>완성 미리보기</button>
+        <button type="button" id="renderBtn" class="primary" disabled>최종 MP4 만들기</button>
       </div>
 
       <div id="renderProgress" class="render-progress hidden">
@@ -328,7 +444,157 @@
     </div>
   </main>
 
+  <section id="manualEditorPage" class="manual-page hidden" aria-label="수동 편집">
+    <header class="manual-topbar">
+      <div class="manual-title">
+        <span class="brand-mark" aria-hidden="true"><img src="assets/subsong-logo-192.png?v=20260630b" alt="" /></span>
+        <div>
+          <b>수동 편집</b>
+          <small>미리보기, 인스펙터, 타임라인으로 마지막 수정을 합니다</small>
+        </div>
+      </div>
+      <div class="manual-nav">
+        <select id="timelineSelect" aria-label="수정할 가사 구간"></select>
+        <button type="button" id="timelinePrev" class="mini-btn">이전</button>
+        <button type="button" id="timelinePlay" class="mini-btn">재생</button>
+        <button type="button" id="timelineNext" class="mini-btn">다음</button>
+        <button type="button" id="manualSaveProjectBtn" class="mini-btn">프로젝트 저장</button>
+        <button type="button" id="manualExitBtn" class="mini-btn">완료</button>
+      </div>
+    </header>
+    <div class="manual-workspace">
+      <section class="manual-monitor">
+        <div id="manualStageSlot" class="manual-stage-slot"></div>
+      </section>
+      <aside class="manual-inspector" id="timelineEditor">
+        <div class="label-row">
+          <span class="field-label">선택 구간</span>
+          <span id="timelineInfo" class="muted">0줄</span>
+        </div>
+        <div class="timeline-edit-grid">
+          <label class="field" for="timelineStart">
+            <span class="field-label">시작</span>
+            <input type="text" id="timelineStart" />
+          </label>
+          <label class="field" for="timelineEnd">
+            <span class="field-label">끝</span>
+            <input type="text" id="timelineEnd" />
+          </label>
+          <label class="field timeline-text-field" for="timelineText">
+            <span class="field-label">가사</span>
+            <textarea id="timelineText" rows="2"></textarea>
+          </label>
+          <label class="field timeline-prompt-field" for="timelinePrompt">
+            <span class="field-label">이미지 프롬프트</span>
+            <textarea id="timelinePrompt" rows="5"></textarea>
+          </label>
+          <label class="field timeline-aspect-field" for="manualAspect">
+            <span class="field-label">화면 비율</span>
+            <select id="manualAspect">
+              <option value="16:9" selected>16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="1:1">1:1</option>
+            </select>
+          </label>
+          <label class="field timeline-provider-field" for="manualImageProvider">
+            <span class="field-label">이미지 생성기</span>
+            <select id="manualImageProvider">
+              <option value="chatgpt_proxy" selected>GPT-Image-2</option>
+              <option value="nanobanana_proxy">나노바나나</option>
+            </select>
+          </label>
+          <label class="also-shorts timeline-subtitle">
+            <input type="checkbox" id="timelineSubtitle" checked />
+            <span>자막 표시</span>
+          </label>
+          <div class="timeline-actions">
+            <button type="button" id="timelineSetStart" class="mini-btn">현재→시작</button>
+            <button type="button" id="timelineSetEnd" class="mini-btn">현재→끝</button>
+            <button type="button" id="timelineUpload" class="mini-btn">배경 업로드</button>
+            <button type="button" id="timelineGenerate" class="mini-btn">이미지 생성</button>
+            <button type="button" id="timelineChat" class="mini-btn">이미지 채팅</button>
+            <button type="button" id="timelineClearBg" class="mini-btn">배경 해제</button>
+            <input type="file" id="timelineFile" accept="image/*,video/*" hidden />
+          </div>
+        </div>
+        <span id="timelineBgNote" class="muted"></span>
+      </aside>
+    </div>
+    <section class="manual-timeline">
+      <div class="manual-timeline-head">
+        <span class="field-label">타임라인</span>
+        <span class="muted">클립을 선택하면 미리보기와 인스펙터가 이동합니다</span>
+      </div>
+      <div class="timeline-scroll">
+        <div id="timelineTrack" class="timeline-track"></div>
+      </div>
+    </section>
+  </section>
+
+  <section id="imageChatModal" class="image-chat-modal hidden" role="dialog" aria-modal="true" aria-labelledby="imageChatTitle">
+    <div class="image-chat-card">
+      <header class="image-chat-head">
+        <div>
+          <span class="kicker">이미지 채팅</span>
+          <h2 id="imageChatTitle">가사 배경 만들기</h2>
+          <p id="imageChatMeta">대화로 프롬프트를 다듬고 이미지를 생성합니다.</p>
+        </div>
+        <button type="button" id="imageChatClose" class="mini-btn" aria-label="이미지 채팅 닫기">×</button>
+      </header>
+      <div class="image-chat-body">
+        <aside class="image-chat-preview">
+          <div id="imageChatPreview" class="image-chat-preview-box">
+            <span>생성된 이미지가 여기에 표시됩니다.</span>
+          </div>
+          <div class="image-chat-preview-actions">
+            <button type="button" id="imageChatGenerate" class="primary">이미지 생성</button>
+            <button type="button" id="imageChatApply" class="ghost" disabled>적용</button>
+          </div>
+          <span id="imageChatProvider" class="muted"></span>
+        </aside>
+        <div class="image-chat-work">
+          <div id="imageChatMessages" class="image-chat-messages" aria-live="polite"></div>
+          <label class="field image-chat-prompt" for="imageChatPrompt">
+            <span class="field-label">현재 프롬프트</span>
+            <textarea id="imageChatPrompt" rows="4"></textarea>
+          </label>
+          <form id="imageChatForm" class="image-chat-form">
+            <input type="text" id="imageChatInput" placeholder="예: 더 따뜻한 노을빛으로, 인물은 왼쪽에 작게" autocomplete="off" />
+            <button type="submit" class="mini-btn">전송</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tutorialOverlay" class="tutorial-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tutorialTitle">
+    <div class="tutorial-card">
+      <div class="tutorial-head">
+        <span class="kicker">처음 사용하는 분을 위한 빠른 안내</span>
+        <button type="button" id="tutorialClose" class="mini-btn" aria-label="튜토리얼 닫기">×</button>
+      </div>
+      <div class="tutorial-body">
+        <div class="tutorial-visual" aria-hidden="true">
+          <span id="tutorialStepNo">1</span>
+        </div>
+        <div class="tutorial-copy">
+          <h2 id="tutorialTitle">음원과 가사를 준비하세요</h2>
+          <p id="tutorialText">MP3/WAV 음원과 줄 단위 가사를 넣으면 자동으로 싱크를 만들 수 있습니다.</p>
+          <div id="tutorialDots" class="tutorial-dots" aria-label="튜토리얼 진행 상태"></div>
+        </div>
+      </div>
+      <div class="tutorial-actions">
+        <button type="button" id="tutorialSkip" class="ghost">스킵</button>
+        <span>
+          <button type="button" id="tutorialPrev" class="mini-btn">이전</button>
+          <button type="button" id="tutorialNext" class="primary">다음</button>
+        </span>
+      </div>
+    </div>
+  </section>
+
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=20260627"></script>
+  <div id="guideTip" class="guide-tip hidden" role="tooltip"></div>
+  <script src="app.js?v=20260701a"></script>
 </body>
 </html>

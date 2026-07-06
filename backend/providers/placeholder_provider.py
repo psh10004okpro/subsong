@@ -78,7 +78,7 @@ class PlaceholderImageProvider(ImageProvider):
     def generate(self, prompt: str, out_path: str, aspect: str = "16:9", **kw) -> str:
         w, h = _SIZES.get(aspect, (1920, 1080))
         label = (kw.get("label") or "").strip()
-        # seed가 다르면 색이 달라져 후보 4장이 서로 구분된다.
+        # seed가 다르면 색이 달라져 생성 결과를 서로 구분할 수 있다.
         key = f"{prompt}|{label}|{kw.get('seed')}"
         seed = int(hashlib.md5(key.encode("utf-8")).hexdigest(), 16)
 

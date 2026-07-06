@@ -29,6 +29,8 @@ let isAligning = false;
 let localAudioUrl = null;
 let anchor = null; // 일관성 참조 { image_id, image_url, has_face }
 let useRef = true;
+let outputEditIndex = 0;
+let audioLeadSec = 0; // 영상 앞 무음/타이틀 프리롤 길이. 실제 오디오는 이 시간만큼 뒤에서 시작한다.
 
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
@@ -38,6 +40,311 @@ const sampleLyrics = [
   "바람이 스쳐 지나가도",
   "이 노래는 남아 있을 거야",
 ].join("\n");
+
+const TUTORIAL_KEY = "subsong_tutorial_seen_v1";
+const THEME_KEY = "subsong_theme_v1";
+const TUTORIAL_STEPS = [
+  {
+    title: "음원과 가사를 준비하세요",
+    text: "소스 단계에서 MP3/WAV 음원과 줄 단위 가사를 넣습니다. 예시 채우기로 먼저 흐름을 확인할 수도 있습니다.",
+  },
+  {
+    title: "자동 정렬로 자막 싱크를 만듭니다",
+    text: "자동 정렬 시작을 누르면 가사별 시작/끝 시간이 만들어집니다. 싱크 단계에서 1줄/2줄 자막, 타이틀, 엔딩도 수정할 수 있습니다.",
+  },
+  {
+    title: "가사별 배경을 생성하거나 업로드하세요",
+    text: "배경 단계에서 GPT-Image-2 또는 나노바나나를 선택해 이미지를 만들고, 원하는 줄만 직접 업로드할 수 있습니다.",
+  },
+  {
+    title: "미리보고 MP4로 내보냅니다",
+    text: "출력 단계에서 자막 위치, 폰트, 화면 비율을 조정하고 완성 미리보기 후 최종 MP4를 생성합니다.",
+  },
+];
+let tutorialIndex = 0;
+
+const GUIDE_TEXT = {
+  undoBtn: "최근 편집 내용을 한 단계 되돌립니다.",
+  redoBtn: "되돌린 편집을 다시 적용합니다.",
+  guideToggle: "버튼 설명 표시를 켜거나 끕니다.",
+  themeSelect: "화면 테마를 화이트 또는 블랙으로 전환합니다. 기본값은 화이트입니다.",
+  loadProjectBtn: "선택한 저장 프로젝트를 불러옵니다.",
+  deleteProjectBtn: "선택한 프로젝트를 삭제합니다.",
+  saveProjectBtn: "현재 작업을 이름을 붙여 프로젝트로 저장합니다.",
+  restoreBtn: "브라우저 자동저장 작업을 복구하거나 새로 시작합니다.",
+  restoreDismiss: "복구 안내를 닫습니다.",
+  sampleBtn: "예시 가사를 입력칸에 추가합니다.",
+  alignBtn: "음원과 가사를 분석해 가사별 시작/끝 시간을 만듭니다.",
+  autoTwoLineBtn: "전체 가사를 보기 좋은 2줄 자막으로 자동 정리합니다.",
+  autoOneLineBtn: "2줄 자막을 다시 1줄 자막으로 합칩니다.",
+  addTitleRow: "영상 시작용 타이틀 줄을 추가합니다.",
+  addEndingRow: "영상 마지막 엔딩 줄을 추가합니다.",
+  addRow: "현재 재생 위치 근처에 새 가사 줄을 추가합니다.",
+  autoPromptBtn: "가사와 전체 분위기로 한글 이미지 프롬프트 초안을 작성합니다.",
+  beatSnapBtn: "배경 구간 경계를 가까운 비트 위치에 맞춥니다.",
+  genAllBtn: "가사별 배경 슬롯과 프롬프트를 준비하고 전체 이미지를 순서대로 생성합니다.",
+  genImagesBtn: "가사 줄마다 배경을 지정할 슬롯을 만듭니다.",
+  genAnchorBtn: "전체 배경 생성에 먼저 사용할 참조 이미지를 만듭니다.",
+  uploadAnchorBtn: "가지고 있는 이미지를 전체 생성용 참조 이미지로 등록합니다.",
+  clearAnchorBtn: "이후 이미지 생성에 쓰는 참조 이미지를 해제합니다.",
+  fontUploadBtn: "로컬 폰트 파일을 업로드해 자막 폰트로 사용합니다.",
+  resetColors: "현재 자막 스타일의 기본 글자색과 강조색으로 되돌립니다.",
+  srtBtn: "현재 자막 싱크를 SRT 파일로 다운로드합니다.",
+  manualEditBtn: "전체 화면 타임라인 편집기로 이동해 수동 보정을 합니다.",
+  previewRenderBtn: "최종 MP4 전에 낮은 해상도 미리보기 영상을 만듭니다.",
+  renderBtn: "현재 설정으로 최종 MP4 영상을 생성합니다.",
+  cancelRenderBtn: "진행 중인 미리보기 또는 MP4 생성을 취소합니다.",
+  railPreviewBtn: "완성 미리보기와 출력 설정이 있는 마지막 단계로 이동합니다.",
+  railTimelineBtn: "전체 화면 타임라인 수동 편집기를 엽니다.",
+  thumbBtn: "대표 배경 이미지와 제목으로 유튜브용 썸네일을 만듭니다.",
+  metaBtn: "유튜브 업로드용 제목, 설명, 태그 초안을 생성합니다.",
+  copyChaptersBtn: "설명란 챕터 타임스탬프를 클립보드에 복사합니다.",
+  copyMetaBtn: "생성된 메타데이터를 클립보드에 복사합니다.",
+  prevStep: "이전 작업 단계로 이동하고 현재 작업을 즉시 자동저장합니다.",
+  nextStep: "다음 작업 단계로 이동하고 현재 작업을 즉시 자동저장합니다.",
+  timelinePrev: "수동 편집에서 이전 가사 구간으로 이동합니다.",
+  timelinePlay: "선택한 가사 구간만 재생하거나 정지합니다.",
+  timelineNext: "수동 편집에서 다음 가사 구간으로 이동합니다.",
+  manualSaveProjectBtn: "수동 편집 내용을 프로젝트로 저장합니다.",
+  manualExitBtn: "수동 편집을 마치고 일반 화면으로 돌아갑니다.",
+  timelineSetStart: "현재 재생 위치를 선택 구간의 시작 시간으로 적용합니다.",
+  timelineSetEnd: "현재 재생 위치를 선택 구간의 끝 시간으로 적용합니다.",
+  timelineUpload: "선택 구간의 배경 이미지나 영상을 직접 업로드합니다.",
+  timelineGenerate: "선택 구간의 프롬프트로 이미지를 생성합니다.",
+  timelineChat: "대화로 프롬프트를 다듬고 이미지를 생성한 뒤 선택 구간에 적용합니다.",
+  timelineClearBg: "선택 구간의 배경을 비우고 이전 배경을 이어 쓰게 합니다.",
+};
+
+const STEP_GUIDE = {
+  1: "음원과 원본 가사를 준비하는 단계입니다.",
+  2: "자막 시간과 가사 줄을 확인하고 수정하는 단계입니다.",
+  3: "가사별 이미지 프롬프트, 생성 이미지, 업로드 배경을 관리하는 단계입니다.",
+  4: "자막 스타일, 화면 비율, 미리보기, MP4 출력을 설정하는 단계입니다.",
+};
+
+const ACTION_GUIDE = {
+  setstart: "현재 재생 위치를 이 줄의 시작 시간으로 지정합니다.",
+  setend: "현재 재생 위치를 이 줄의 끝 시간으로 지정합니다.",
+  play: "이 가사 줄만 시작부터 끝까지 재생합니다.",
+  del: "이 가사 줄을 삭제합니다.",
+};
+
+function normalizeTheme(value) {
+  return value === "dark" ? "dark" : "light";
+}
+
+function savedTheme() {
+  try {
+    return normalizeTheme(localStorage.getItem(THEME_KEY));
+  } catch (e) {
+    return "light";
+  }
+}
+
+function applyTheme(value, notify = false) {
+  const next = normalizeTheme(value);
+  document.body.classList.toggle("theme-dark", next === "dark");
+  document.body.classList.toggle("theme-light", next === "light");
+  document.documentElement.dataset.theme = next;
+  const select = $("themeSelect");
+  if (select) select.value = next;
+  if (notify) status(next === "dark" ? "블랙 테마를 적용했습니다." : "화이트 테마를 적용했습니다.", "ok");
+}
+
+function setupTheme() {
+  applyTheme(savedTheme());
+  const select = $("themeSelect");
+  if (!select) return;
+  select.addEventListener("change", (e) => {
+    const next = normalizeTheme(e.target.value);
+    applyTheme(next, true);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch (err) {
+      /* 저장 불가 환경이면 이번 세션에만 적용한다 */
+    }
+  });
+}
+
+function setGuide(el, text) {
+  if (!el || !text) return;
+  el.dataset.guide = text;
+  if (!el.title) el.title = text;
+}
+
+function forGuideMatches(root, selector, fn) {
+  if (root && root.nodeType === 1 && root.matches(selector)) fn(root);
+  if (root && root.querySelectorAll) root.querySelectorAll(selector).forEach(fn);
+}
+
+function applyButtonGuides(root = document) {
+  Object.entries(GUIDE_TEXT).forEach(([id, text]) => setGuide($(id), text));
+  document.querySelectorAll(".steps li[data-step]").forEach((li) => {
+    setGuide(li, STEP_GUIDE[li.dataset.step]);
+  });
+  document.querySelectorAll(".rail-item[data-rail-step]").forEach((button) => {
+    setGuide(button, STEP_GUIDE[button.dataset.railStep]);
+  });
+  forGuideMatches(root, ".line button[data-act]", (button) => {
+    setGuide(button, ACTION_GUIDE[button.dataset.act]);
+  });
+  forGuideMatches(root, ".section-card .gen", (button) =>
+    setGuide(button, "이 가사의 프롬프트로 배경 이미지를 생성합니다."));
+  forGuideMatches(root, ".section-card .image-chat", (button) =>
+    setGuide(button, "채팅 팝업에서 대화하며 이미지를 생성하고 마음에 들 때 적용합니다."));
+  forGuideMatches(root, ".section-card .upload", (button) =>
+    setGuide(button, "내 이미지나 영상을 이 가사 배경으로 올립니다."));
+  forGuideMatches(root, ".section-card .anchor-set", (button) =>
+    setGuide(button, "이 구간 이미지를 다음 생성의 참조 이미지로 사용합니다."));
+  forGuideMatches(root, ".candidate", (button) =>
+    setGuide(button, "이 후보 이미지를 해당 가사 배경으로 선택합니다."));
+  forGuideMatches(root, ".timeline-clip", (button) =>
+    setGuide(button, "이 구간을 선택하고 수동 편집 인스펙터로 불러옵니다."));
+  forGuideMatches(root, ".stage-timeline-clip", (button) =>
+    setGuide(button, "이 가사 위치로 미리보기를 이동합니다."));
+  forGuideMatches(root, "a[download]", (link) =>
+    setGuide(link, "생성된 파일을 다운로드합니다."));
+}
+
+function positionGuideTip(target) {
+  const tip = $("guideTip");
+  if (!tip || !target || !target.dataset.guide) return;
+  tip.textContent = target.dataset.guide;
+  tip.classList.remove("hidden");
+  tip.style.left = "0px";
+  tip.style.top = "0px";
+  const rect = target.getBoundingClientRect();
+  const tw = tip.offsetWidth;
+  const th = tip.offsetHeight;
+  const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - tw - 8));
+  let top = rect.bottom + 10;
+  if (top + th > window.innerHeight - 8) top = Math.max(8, rect.top - th - 10);
+  tip.style.left = `${Math.round(left)}px`;
+  tip.style.top = `${Math.round(top)}px`;
+}
+
+function hideGuideTip() {
+  const tip = $("guideTip");
+  if (tip) tip.classList.add("hidden");
+}
+
+let guideSetupDone = false;
+function setupGuides() {
+  if (guideSetupDone) return;
+  guideSetupDone = true;
+  applyButtonGuides();
+  const observer = new MutationObserver((items) => {
+    items.forEach((item) => {
+      item.addedNodes.forEach((node) => {
+        if (node.nodeType === 1) applyButtonGuides(node);
+      });
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  document.addEventListener("pointerover", (e) => {
+    const target = e.target.closest("[data-guide]");
+    if (target) positionGuideTip(target);
+  });
+  document.addEventListener("pointerout", (e) => {
+    const target = e.target.closest("[data-guide]");
+    if (target && !target.contains(e.relatedTarget)) hideGuideTip();
+  });
+  document.addEventListener("focusin", (e) => {
+    const target = e.target.closest("[data-guide]");
+    if (target) positionGuideTip(target);
+  });
+  document.addEventListener("focusout", hideGuideTip);
+  window.addEventListener("scroll", hideGuideTip, true);
+  window.addEventListener("resize", hideGuideTip);
+
+  $("guideToggle").addEventListener("click", () => {
+    const on = !document.body.classList.contains("guide-mode");
+    document.body.classList.toggle("guide-mode", on);
+    $("guideToggle").setAttribute("aria-pressed", on ? "true" : "false");
+    status(on ? "가이드 표시를 켰습니다. 버튼 위에 올리면 설명이 보입니다." : "가이드 표시를 껐습니다.", "ok");
+  });
+}
+
+function setTutorialSeen() {
+  try {
+    localStorage.setItem(TUTORIAL_KEY, "1");
+  } catch (e) {
+    /* 저장 불가 환경이면 이번 세션에서만 닫힌다 */
+  }
+}
+
+function renderTutorial() {
+  const step = TUTORIAL_STEPS[tutorialIndex] || TUTORIAL_STEPS[0];
+  if (!$("tutorialTitle")) return;
+  $("tutorialStepNo").textContent = String(tutorialIndex + 1);
+  $("tutorialTitle").textContent = step.title;
+  $("tutorialText").textContent = step.text;
+  $("tutorialPrev").disabled = tutorialIndex === 0;
+  $("tutorialNext").textContent = tutorialIndex === TUTORIAL_STEPS.length - 1 ? "시작하기" : "다음";
+  const dots = $("tutorialDots");
+  if (dots) {
+    dots.innerHTML = "";
+    TUTORIAL_STEPS.forEach((_, i) => {
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "tutorial-dot" + (i === tutorialIndex ? " active" : "");
+      dot.setAttribute("aria-label", `${i + 1}번째 튜토리얼 보기`);
+      dot.addEventListener("click", () => {
+        tutorialIndex = i;
+        renderTutorial();
+      });
+      dots.appendChild(dot);
+    });
+  }
+}
+
+function closeTutorial(markSeen = true) {
+  const overlay = $("tutorialOverlay");
+  if (!overlay) return;
+  if (markSeen) setTutorialSeen();
+  overlay.classList.add("hidden");
+  document.body.classList.remove("tutorial-open");
+}
+
+function showTutorial(force = false) {
+  const overlay = $("tutorialOverlay");
+  if (!overlay) return;
+  if (!force) {
+    try {
+      if (localStorage.getItem(TUTORIAL_KEY) === "1") return;
+    } catch (e) {
+      /* localStorage 차단 시에도 튜토리얼은 보여준다 */
+    }
+  }
+  tutorialIndex = 0;
+  renderTutorial();
+  overlay.classList.remove("hidden");
+  document.body.classList.add("tutorial-open");
+  setTimeout(() => $("tutorialNext") && $("tutorialNext").focus(), 0);
+}
+
+function setupTutorial() {
+  if (!$("tutorialOverlay")) return;
+  $("tutorialSkip").addEventListener("click", () => closeTutorial(true));
+  $("tutorialClose").addEventListener("click", () => closeTutorial(true));
+  $("tutorialPrev").addEventListener("click", () => {
+    tutorialIndex = Math.max(0, tutorialIndex - 1);
+    renderTutorial();
+  });
+  $("tutorialNext").addEventListener("click", () => {
+    if (tutorialIndex >= TUTORIAL_STEPS.length - 1) return closeTutorial(true);
+    tutorialIndex += 1;
+    renderTutorial();
+  });
+  $("tutorialOverlay").addEventListener("click", (e) => {
+    if (e.target === $("tutorialOverlay")) closeTutorial(true);
+  });
+  document.addEventListener("keydown", (e) => {
+    if ($("tutorialOverlay").classList.contains("hidden")) return;
+    if (e.key === "Escape") closeTutorial(true);
+  });
+}
 
 function fmt(t) {
   t = Math.max(0, +t || 0);
@@ -106,8 +413,12 @@ function updateActionState() {
 
   $("alignBtn").disabled = isAligning || !hasSource || !hasLyrics;
   $("srtBtn").disabled = !hasScenes || !timingOk;
-  $("renderBtn").disabled = !audioId || !hasScenes || !timingOk;
+  const canRender = !isRendering && audioId && hasScenes && timingOk;
+  if ($("manualEditBtn")) $("manualEditBtn").disabled = !hasScenes;
+  $("previewRenderBtn").disabled = !canRender;
+  $("renderBtn").disabled = !canRender;
   $("genImagesBtn").disabled = !hasScenes;
+  if ($("genAllBtn")) $("genAllBtn").disabled = !hasScenes;
   $("editorEmpty").classList.toggle("hidden", hasScenes);
   $("editorTools").classList.toggle("hidden", !hasScenes);
   $("lineSummary").textContent = hasScenes
@@ -117,6 +428,18 @@ function updateActionState() {
 
 function hasTimingIssues() {
   return scenes.some((sc) => Number(sc.end) <= Number(sc.start));
+}
+
+function isManualMode() {
+  const page = $("manualEditorPage");
+  return !!(page && !page.classList.contains("hidden"));
+}
+
+function updateStudioChromeHeight() {
+  const header = document.querySelector(".app-header");
+  const headerHeight = header ? header.getBoundingClientRect().height : 112;
+  const verticalGap = 22; // studio 위/아래 여백과 안전 여유
+  document.documentElement.style.setProperty("--studio-chrome-h", `${Math.ceil(headerHeight + verticalGap)}px`);
 }
 
 let currentStep = 1;
@@ -129,25 +452,124 @@ function goStep(n) {
     if (s === currentStep) li.setAttribute("aria-current", "step");
     else li.removeAttribute("aria-current");
   });
+  document.querySelectorAll(".rail-item[data-rail-step]").forEach((button) => {
+    const s = Number(button.dataset.railStep);
+    button.classList.toggle("active", s === currentStep);
+    button.classList.toggle("done", s < currentStep);
+    if (s === currentStep) button.setAttribute("aria-current", "step");
+    else button.removeAttribute("aria-current");
+  });
   document.querySelectorAll(".step").forEach((p) => {
     p.classList.remove("hidden");
     p.classList.toggle("active", Number(p.dataset.step) === currentStep);
   });
   const withStage = currentStep >= 2;
-  $("stage").classList.toggle("hidden", !withStage);
+  if (!isManualMode()) $("stage").classList.toggle("hidden", !withStage);
   document.querySelector(".studio").classList.toggle("with-stage", withStage);
   $("prevStep").classList.toggle("hidden", currentStep === 1);
   $("nextStep").classList.toggle("hidden", currentStep === 4);
   if (withStage) {
+    updateStudioChromeHeight();
     setPreviewAspect();
     updatePreview();
+    renderStageTimeline();
   }
+  if (currentStep === 4) renderOutputTimeline();
   window.scrollTo({ top: 0, behavior: "smooth" });
+  saveAutosaveNow();  // 단계 이동(정렬 완료 포함)은 디바운스 없이 즉시 저장
 }
 
 function getAspect() {
+  const manual = $("manualAspect");
+  if (isManualMode() && manual && manual.value) return manual.value;
   const checked = document.querySelector('input[name="aspect"]:checked');
   return checked ? checked.value : "16:9";
+}
+
+function syncAspect(value, save = true) {
+  const next = ["16:9", "9:16", "1:1"].includes(value) ? value : "16:9";
+  const radio = document.querySelector(`input[name="aspect"][value="${next}"]`);
+  if (radio) radio.checked = true;
+  if ($("manualAspect")) $("manualAspect").value = next;
+  setPreviewAspect();
+  updatePreview();
+  if (save) scheduleAutosave();
+}
+
+function getImageProvider() {
+  const manual = $("manualImageProvider");
+  const el = isManualMode() && manual ? manual : $("imageProvider");
+  return el ? el.value || "chatgpt_proxy" : "chatgpt_proxy";
+}
+
+function imageProviderLabel() {
+  const manual = $("manualImageProvider");
+  const el = isManualMode() && manual ? manual : $("imageProvider");
+  return el && el.selectedOptions[0] ? el.selectedOptions[0].textContent : "GPT-Image-2";
+}
+
+function syncImageProvider(value) {
+  const main = $("imageProvider");
+  const manual = $("manualImageProvider");
+  const requested = value || getImageProvider();
+  const hasOption = (el, next) => el && [...el.options].some((option) => option.value === next);
+  const next = hasOption(main, requested) || hasOption(manual, requested) ? requested : "chatgpt_proxy";
+  if (main) main.value = next;
+  if (manual) manual.value = next;
+}
+
+function imageProviderButtonLabel() {
+  return "이미지 생성";
+}
+
+function karaokeEnabled() {
+  const el = $("karaokeToggle");
+  return !!(el && el.checked);
+}
+
+function karaokeHighlightActive() {
+  return karaokeEnabled() && $("subtitleStyle").value !== "simple";
+}
+
+const ASPECT_SIZE = {
+  "16:9": [1920, 1080],
+  "9:16": [1080, 1920],
+  "1:1": [1080, 1080],
+};
+
+function subtitleOffsets() {
+  return {
+    x: Number($("subtitleOffsetX").value) || 0,
+    y: Number($("subtitleOffsetY").value) || 0,
+  };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function titleLeadSeconds() {
+  const el = $("titleLeadSec");
+  return clampNumber(el ? el.value : 3, 0.5, 30, 3);
+}
+
+function endingTailSeconds() {
+  const el = $("endingTailSec");
+  return clampNumber(el ? el.value : 3, 0.5, 60, 3);
+}
+
+function timelineAudioOffset() {
+  return Math.max(0, Number(audioLeadSec) || 0);
+}
+
+function currentTimelineTime() {
+  return round2((audio.currentTime || 0) + timelineAudioOffset());
+}
+
+function audioTimeFromTimeline(t) {
+  return Math.max(0, (Number(t) || 0) - timelineAudioOffset());
 }
 
 function normalizeScenes(input) {
@@ -188,14 +610,17 @@ async function doAlign() {
 
     audioId = data.audio_id;
     scenes = normalizeScenes(data.scenes || []);
+    audioLeadSec = 0;
     audio.src = data.audio_url;
+    if (!$("songTitle").value.trim()) $("songTitle").value = defaultTitleText();
+    const addedSpecialRows = ensureDefaultSpecialRows();
     stopAt = null;
     sectionsState = [];
     renderRows();
     renderSectionCards();
     resetHistory(); // 정렬 결과를 되돌리기 시작점으로
     goStep(2);
-    status(`정렬 완료: ${scenes.length}줄. 미리보기로 확인하며 고치세요.`, "ok");
+    status(`정렬 완료: ${scenes.length}줄${addedSpecialRows ? " (타이틀/엔딩 포함)" : ""}. 미리보기로 확인하며 고치세요.`, "ok");
   } catch (e) {
     status("정렬 실패: " + e.message, "err");
   } finally {
@@ -235,7 +660,7 @@ function renderRows() {
 
     const start = makeInput("start time-input", fmt(scene.start), "시작 시간");
     const end = makeInput("end time-input", fmt(scene.end), "끝 시간");
-    const lyric = makeInput("lyric", scene.text, "가사");
+    const lyric = makeTextarea("lyric", scene.text, "가사");
 
     const actions = document.createElement("span");
     actions.className = "row-actions";
@@ -252,6 +677,7 @@ function renderRows() {
 
   updateCurrentLine();
   updateActionState();
+  renderOutputTimeline();
   recordHistorySoon();
 }
 
@@ -261,6 +687,96 @@ function makeInput(className, value, label) {
   input.value = value;
   input.setAttribute("aria-label", label);
   return input;
+}
+
+function makeTextarea(className, value, label) {
+  const textarea = document.createElement("textarea");
+  textarea.className = className;
+  textarea.value = value;
+  textarea.rows = 2;
+  textarea.spellcheck = false;
+  textarea.setAttribute("aria-label", label);
+  return textarea;
+}
+
+function twoLineText(value) {
+  const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+  return lines.length <= 2 ? lines.join("\n") : [lines[0], lines.slice(1).join(" ")].join("\n");
+}
+
+function oneLineText(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function autoTwoLineText(value) {
+  const text = String(value || "").replace(/\r\n?/g, "\n").split("\n").join(" ").replace(/\s+/g, " ").trim();
+  if (!text || text.length <= 16) return text;
+
+  const chars = [...text];
+  const mid = Math.floor(chars.length / 2);
+  const breakChars = new Set([" ", ",", ".", "?", "!", "，", "。", "、", "?", "!", "·", "/", "-"]);
+  let best = -1;
+  let bestDist = Infinity;
+  chars.forEach((ch, i) => {
+    if (!breakChars.has(ch)) return;
+    if (i < 4 || i > chars.length - 5) return;
+    const dist = Math.abs(i - mid);
+    if (dist < bestDist) {
+      best = i;
+      bestDist = dist;
+    }
+  });
+
+  const splitAt = best >= 0 ? best + (chars[best] === " " ? 0 : 1) : mid;
+  const left = chars.slice(0, splitAt).join("").trim();
+  const right = chars.slice(splitAt).join("").trim();
+  if (!left || !right) return text;
+  return `${left}\n${right}`;
+}
+
+function autoTwoLineAll() {
+  if (!scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
+  let changed = 0;
+  scenes = scenes.map((scene) => {
+    const next = twoLineText(autoTwoLineText(scene.text));
+    if (next !== scene.text) changed++;
+    return { ...scene, text: next };
+  });
+  syncSectionTimes();
+  renderRows();
+  if (sectionsState.length) {
+    renderSectionCards();
+    renderChapters();
+  }
+  updatePreview();
+  updateActionState();
+  status(changed ? `${changed}개 가사를 2줄 자막으로 정리했습니다.` : "이미 2줄 기준으로 정리되어 있습니다.", "ok");
+}
+
+function autoOneLineAll() {
+  if (!scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
+  let changed = 0;
+  scenes = scenes.map((scene) => {
+    const next = oneLineText(scene.text);
+    if (next !== scene.text) changed++;
+    return { ...scene, text: next };
+  });
+  syncSectionTimes();
+  renderRows();
+  if (sectionsState.length) {
+    renderSectionCards();
+    renderChapters();
+  }
+  updatePreview();
+  updateActionState();
+  status(changed ? `${changed}개 가사를 1줄 자막으로 정리했습니다.` : "이미 1줄 기준으로 정리되어 있습니다.", "ok");
 }
 
 function makeButton(action, text, label, extraClass = "") {
@@ -274,18 +790,271 @@ function makeButton(action, text, label, extraClass = "") {
   return button;
 }
 
-// 구간(section)의 start/end는 소속 장면들에서 파생된 값이라, 장면 시간을 고치면
-// 같이 갱신해 줘야 미리보기·렌더의 배경 타이밍이 어긋나지 않는다.
-function syncSectionTimes() {
-  if (!sectionsState.length) return;
-  const byId = new Map(scenes.map((s) => [s.id, s]));
-  sectionsState.forEach((sec) => {
-    const members = (sec.scene_ids || []).map((id) => byId.get(id)).filter(Boolean);
-    if (members.length) {
-      sec.start = round2(Math.min(...members.map((m) => m.start)));
-      sec.end = round2(Math.max(...members.map((m) => m.end)));
+function nextSceneId() {
+  return scenes.reduce((m, s) => Math.max(m, Number(s.id) || 0), -1) + 1;
+}
+
+function sceneSortBias(scene) {
+  if (scene && scene.section === "title") return -1;
+  if (scene && scene.section === "ending") return 1;
+  return 0;
+}
+
+function sortScenes() {
+  scenes.sort((a, b) =>
+    Number(a.start) - Number(b.start)
+    || sceneSortBias(a) - sceneSortBias(b)
+    || Number(a.id) - Number(b.id));
+}
+
+function defaultTitleText() {
+  const typed = $("songTitle") ? $("songTitle").value.trim() : "";
+  if (typed) return typed;
+  const file = $("audioFile") && $("audioFile").files ? $("audioFile").files[0] : null;
+  const fromFile = file ? String(file.name || "").replace(/\.[^.]+$/, "").trim() : "";
+  return fromFile || "타이틀";
+}
+
+function estimatedAudioEnd(includeSpecial = false) {
+  return scenes.reduce((m, s) => {
+    if (!includeSpecial && (s.section === "title" || s.section === "ending")) return m;
+    return Math.max(m, Number(s.end) || 0);
+  }, 0);
+}
+
+function regularScenes() {
+  return scenes.filter((s) => s.section !== "title" && s.section !== "ending");
+}
+
+function firstRegularStart(items = regularScenes()) {
+  return items.reduce((m, s) => Math.min(m, Number(s.start) || 0), Infinity);
+}
+
+function lastRegularEnd(items = regularScenes()) {
+  return items.reduce((m, s) => Math.max(m, Number(s.end) || 0), 0);
+}
+
+function audioEndTime() {
+  return Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+}
+
+function videoAudioEndTime() {
+  return timelineAudioOffset() + audioEndTime();
+}
+
+function makeSpecialScene(kind) {
+  const fallbackDur = 3;
+  const regular = regularScenes();
+  const title = defaultTitleText();
+  if (kind === "title") {
+    const firstStart = firstRegularStart(regular);
+    const fallbackEnd = Math.min(fallbackDur, estimatedAudioEnd(true) || fallbackDur);
+    const end = Number.isFinite(firstStart)
+      ? Math.max(0.1, firstStart)
+      : fallbackEnd;
+    return {
+      id: nextSceneId(),
+      start: 0,
+      end: round2(end),
+      text: title,
+      section: "title",
+      image_prompt: `${title}, opening title scene, cinematic music video`,
+      image_path: "",
+      video_path: "",
+    };
+  }
+
+  const regularEnd = lastRegularEnd(regular);
+  const audioEnd = videoAudioEndTime();
+  const start = round2(regularEnd);
+  const end = round2(audioEnd > regularEnd ? audioEnd : regularEnd + fallbackDur);
+  return {
+    id: nextSceneId(),
+    start,
+    end,
+    text: "엔딩",
+    section: "ending",
+    image_prompt: "ending scene, final outro, cinematic music video",
+    image_path: "",
+    video_path: "",
+  };
+}
+
+function ensureDefaultSpecialRows() {
+  if (!scenes.length) return 0;
+  let added = 0;
+  if (!scenes.some((scene) => scene.section === "title")) {
+    scenes.push(makeSpecialScene("title"));
+    added++;
+  }
+  if (!scenes.some((scene) => scene.section === "ending")) {
+    scenes.push(makeSpecialScene("ending"));
+    added++;
+  }
+  if (added) {
+    sortScenes();
+  }
+  return added;
+}
+
+function applySpecialTiming(scene, kind) {
+  const next = makeSpecialScene(kind);
+  scene.start = next.start;
+  scene.end = next.end;
+  scene.section = kind;
+  if (!String(scene.text || "").trim()) scene.text = next.text;
+  if (!String(scene.image_prompt || "").trim()) scene.image_prompt = next.image_prompt;
+  scene.image_path = scene.image_path || "";
+  scene.video_path = scene.video_path || "";
+  return scene;
+}
+
+function shiftScenesAfterTitle(delta) {
+  if (!delta) return;
+  scenes.forEach((scene) => {
+    if (scene.section === "title") return;
+    scene.start = round2(Math.max(0, Number(scene.start) + delta));
+    scene.end = round2(Math.max(scene.start + 0.1, Number(scene.end) + delta));
+    if (Array.isArray(scene.words)) {
+      scene.words = scene.words.map((word) => ({
+        ...word,
+        start: Number.isFinite(Number(word.start)) ? round2(Number(word.start) + delta) : word.start,
+        end: Number.isFinite(Number(word.end)) ? round2(Number(word.end) + delta) : word.end,
+      }));
     }
   });
+}
+
+function applyTitleBeforeSong(duration = titleLeadSeconds()) {
+  const nextLead = round2(Math.max(0, duration));
+  const prevLead = timelineAudioOffset();
+  const delta = round2(nextLead - prevLead);
+  shiftScenesAfterTitle(delta);
+  audioLeadSec = nextLead;
+
+  let scene = scenes.find((s) => s.section === "title");
+  if (!scene) {
+    scene = makeSpecialScene("title");
+    scenes.push(scene);
+  }
+  scene.start = 0;
+  scene.end = round2(Math.max(0.1, nextLead));
+  scene.section = "title";
+  if (!String(scene.text || "").trim()) scene.text = defaultTitleText();
+  if (!String(scene.image_prompt || "").trim()) {
+    scene.image_prompt = `${scene.text}, opening title scene, cinematic music video`;
+  }
+
+  const ending = scenes.find((s) => s.section === "ending");
+  if (ending) applyEndingAfterSong(endingTailSeconds(), ending);
+  sortScenes();
+  return scene;
+}
+
+function applyEndingAfterSong(duration = endingTailSeconds(), existing = null) {
+  const regularEnd = lastRegularEnd();
+  const audioEnd = videoAudioEndTime();
+  const start = round2(regularEnd);
+  const end = round2(Math.max(audioEnd, regularEnd) + Math.max(0, duration));
+  let scene = existing || scenes.find((s) => s.section === "ending");
+  if (!scene) {
+    scene = makeSpecialScene("ending");
+    scenes.push(scene);
+  }
+  scene.start = start;
+  scene.end = Math.max(start + 0.1, end);
+  scene.text = String(scene.text || "").trim() || "엔딩";
+  scene.section = "ending";
+  if (!String(scene.image_prompt || "").trim()) {
+    scene.image_prompt = "ending scene, final outro, cinematic music video";
+  }
+  sortScenes();
+  return scene;
+}
+
+function refreshSceneEditors(seekIndex = -1) {
+  syncSectionTimes();
+  renderRows();
+  renderSectionCards();
+  renderChapters();
+  renderOutputTimeline();
+  updatePreview();
+  updateActionState();
+  if (seekIndex >= 0 && scenes[seekIndex]) seekToTime(scenes[seekIndex].start);
+}
+
+function insertSpecialRow(kind) {
+  if (!scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
+  const scene = kind === "title"
+    ? applyTitleBeforeSong(titleLeadSeconds())
+    : applyEndingAfterSong(endingTailSeconds());
+  sortScenes();
+  const index = scenes.findIndex((s) => s.id === scene.id);
+  outputEditIndex = index >= 0 ? index : outputEditIndex;
+  refreshSceneEditors(index);
+  status(
+    kind === "title"
+      ? `타이틀 줄을 0:00.0~${fmt(scene.end)}로 맞췄습니다.`
+      : `엔딩 줄을 ${fmt(scene.start)}부터 시작하도록 맞췄습니다.`,
+    "ok"
+  );
+}
+
+function lyricLabel(lines, index = 0) {
+  const text = (lines || [])
+    .map((line) => String(line || "").replace(/\s+/g, " ").trim())
+    .find(Boolean);
+  if (!text) return "";
+  return text.length > 36 ? text.slice(0, 36) + "..." : text;
+}
+
+function defaultImagePrompt(scene) {
+  const style = $("imgStyle") ? $("imgStyle").value.trim() : "";
+  const lyric = String((scene && scene.text) || "").replace(/\s+/g, " ").trim();
+  return [style, lyric].filter(Boolean).join(", ") || "background";
+}
+
+function sectionFromScene(scene, index, previous) {
+  const lines = [scene.text].filter((v) => String(v || "").trim());
+  return {
+    ...(previous || {}),
+    index,
+    label: lyricLabel(lines, index) || `구간 ${index + 1}`,
+    section_label: String(scene.section || "").trim(),
+    start: round2(scene.start),
+    end: round2(scene.end),
+    scene_ids: [scene.id],
+    lines,
+    image_prompt: (previous && previous.image_prompt) || defaultImagePrompt(scene),
+    image_path: (previous && previous.image_path) || "",
+    image_id: (previous && previous.image_id) || "",
+    image_url: (previous && previous.image_url) || "",
+    candidates: previous && previous.candidates ? [...previous.candidates] : [],
+    subtitle: previous ? previous.subtitle !== false : true,
+  };
+}
+
+// 배경 슬롯(section)의 start/end는 소속 장면에서 파생된 값이라, 장면 시간을 고치면
+// 같이 갱신해 줘야 미리보기·렌더의 배경 타이밍이 어긋나지 않는다.
+// 스탭3가 이미 만들어진 상태에서는 스탭2의 가사 행과 1:1 개수도 유지한다.
+function syncSectionTimes() {
+  if (!sectionsState.length) return false;
+  const previousByScene = new Map();
+  sectionsState.forEach((sec) => {
+    (sec.scene_ids || []).forEach((id) => {
+      if (!previousByScene.has(id)) previousByScene.set(id, sec);
+    });
+  });
+
+  const next = [];
+  scenes.forEach((scene) => {
+    if (!String(scene.text || "").trim()) return;
+    next.push(sectionFromScene(scene, next.length, previousByScene.get(scene.id)));
+  });
+  const changed = next.length !== sectionsState.length
+    || next.some((sec, i) => sec.scene_ids[0] !== (sectionsState[i] && (sectionsState[i].scene_ids || [])[0]));
+  sectionsState = next;
+  return changed;
 }
 
 function updateRowFromInput(target) {
@@ -302,7 +1071,8 @@ function updateRowFromInput(target) {
     scene.end = round2(parseTime(target.value));
     target.value = fmt(scene.end);
   } else if (target.classList.contains("lyric")) {
-    scene.text = target.value;
+    scene.text = twoLineText(target.value);
+    target.value = scene.text;
   }
 
   row.classList.toggle("invalid", scene.end <= scene.start);
@@ -310,17 +1080,39 @@ function updateRowFromInput(target) {
     status("끝 시간은 시작 시간보다 커야 합니다.", "err");
   }
   syncSectionTimes();
+  if (sectionsState.length) {
+    renderSectionCards();
+    renderChapters();
+  }
   updateActionState();
   updatePreview();
 }
 
 function updateCurrentLine() {
-  const t = audio.currentTime || 0;
+  const t = currentTimelineTime();
   $("playhead").textContent = fmt(t);
   document.querySelectorAll(".line").forEach((row) => {
     const sc = scenes[Number(row.dataset.i)];
     row.classList.toggle("current", Boolean(sc && t >= sc.start && t < sc.end));
   });
+  document.querySelectorAll(".section-card").forEach((card) => {
+    const sec = sectionsState[Number(card.dataset.i)];
+    card.classList.toggle("current", Boolean(sec && t >= sec.start && t < sec.end));
+  });
+  updateStageTimelineCurrent();
+  updateOutputTimelineCurrent();
+}
+
+function seekToTime(t) {
+  const next = audioTimeFromTimeline(t);
+  stopAt = null;
+  try {
+    audio.currentTime = next;
+  } catch (e) {
+    // 오디오가 아직 완전히 준비되지 않아도 미리보기 갱신은 계속 시도한다.
+  }
+  updateCurrentLine();
+  updatePreview();
 }
 
 function setAudioPreview(file) {
@@ -332,6 +1124,7 @@ function setAudioPreview(file) {
 $("audioFile").addEventListener("change", (e) => {
   const file = e.target.files[0];
   audioId = null;
+  audioLeadSec = 0;
   scenes = [];
   sectionsState = [];
   anchor = null;
@@ -358,51 +1151,80 @@ $("sampleBtn").addEventListener("click", () => {
 });
 
 $("lines").addEventListener("change", (e) => {
-  if (e.target.matches("input")) updateRowFromInput(e.target);
+  if (e.target.matches("input, textarea")) updateRowFromInput(e.target);
+});
+
+$("lines").addEventListener("input", (e) => {
+  if (!e.target.classList.contains("lyric")) return;
+  const row = e.target.closest(".line");
+  const scene = row && scenes[Number(row.dataset.i)];
+  if (!scene) return;
+  const next = twoLineText(e.target.value);
+  if (next !== e.target.value) e.target.value = next;
+  scene.text = next;
+  updatePreview();
 });
 
 $("lines").addEventListener("click", (e) => {
   const button = e.target.closest("button");
-  if (!button) return;
-  const row = button.closest(".line");
+  const row = (button || e.target).closest(".line");
+  if (!row) return;
   const i = Number(row.dataset.i);
   const scene = scenes[i];
   if (!scene) return;
 
+  if (!button) {
+    seekToTime(scene.start);
+    return;
+  }
+
   if (button.dataset.act === "setstart") {
-    scene.start = round2(audio.currentTime || 0);
+    scene.start = currentTimelineTime();
     row.querySelector(".start").value = fmt(scene.start);
   } else if (button.dataset.act === "setend") {
-    scene.end = round2(audio.currentTime || 0);
+    scene.end = currentTimelineTime();
     row.querySelector(".end").value = fmt(scene.end);
   } else if (button.dataset.act === "play") {
     if (!audio.paused) { // 재생 중이면 정지(토글)
       audio.pause();
       stopAt = null;
     } else {
-      audio.currentTime = scene.start;
+      seekToTime(scene.start);
       stopAt = scene.end;
       audio.play().catch((err) =>
         status("이 줄을 재생할 수 없습니다(오디오 미로드일 수 있음): " + err.message, "err"));
     }
   } else if (button.dataset.act === "del") {
+    const wasLeadTitle = scene.section === "title" && timelineAudioOffset() > 0;
     scenes.splice(i, 1);
+    if (wasLeadTitle) {
+      shiftScenesAfterTitle(-timelineAudioOffset());
+      audioLeadSec = 0;
+      const ending = scenes.find((s) => s.section === "ending");
+      if (ending) applyEndingAfterSong(endingTailSeconds(), ending);
+    }
     syncSectionTimes();
     renderRows();
+    renderSectionCards();
+    renderChapters();
     updatePreview();
     return;
   }
 
   row.classList.toggle("invalid", scene.end <= scene.start);
   syncSectionTimes();
+  if (sectionsState.length) {
+    renderSectionCards();
+    renderChapters();
+  }
   updateActionState();
   updatePreview();
 });
 
 $("addRow").addEventListener("click", () => {
-  const t = round2(audio.currentTime || 0);
+  const t = currentTimelineTime();
   // scenes.length는 줄을 지운 뒤 기존 id와 충돌할 수 있다 → 최대 id + 1로 발급.
-  const nextId = scenes.reduce((m, s) => Math.max(m, s.id), -1) + 1;
+  const nextId = nextSceneId();
   scenes.push({
     id: nextId,
     start: t,
@@ -412,8 +1234,13 @@ $("addRow").addEventListener("click", () => {
     image_path: "",
     video_path: "",
   });
-  renderRows();
+  sortScenes();
+  refreshSceneEditors(scenes.findIndex((s) => s.id === nextId));
 });
+$("autoTwoLineBtn").addEventListener("click", autoTwoLineAll);
+$("autoOneLineBtn").addEventListener("click", autoOneLineAll);
+$("addTitleRow").addEventListener("click", () => insertSpecialRow("title"));
+$("addEndingRow").addEventListener("click", () => insertSpecialRow("ending"));
 
 audio.addEventListener("loadedmetadata", () => {
   $("audioMeta").textContent = Number.isFinite(audio.duration)
@@ -422,7 +1249,7 @@ audio.addEventListener("loadedmetadata", () => {
 });
 
 audio.addEventListener("timeupdate", () => {
-  const t = audio.currentTime || 0;
+  const t = currentTimelineTime();
   if (stopAt !== null && t >= stopAt) {
     audio.pause();
     stopAt = null;
@@ -430,7 +1257,10 @@ audio.addEventListener("timeupdate", () => {
   updateCurrentLine();
   updatePreview();
 });
-audio.addEventListener("seeked", updatePreview);
+audio.addEventListener("seeked", () => {
+  updateCurrentLine();
+  updatePreview();
+});
 audio.addEventListener("error", () => {
   // 빈 src(초기 상태)에서의 무해한 이벤트는 무시.
   if (!audio.currentSrc) return;
@@ -451,13 +1281,14 @@ $("bgFile").addEventListener("change", async (e) => {
     bgId = data.bg_id;
     bgName = file.name;
     updateBgNote();
-    status("배경 업로드 완료", "ok");
+    scheduleAutosave();
+    status("배경 업로드 완료. 사이트를 나갔다 와도 현재 작업에 유지됩니다.", "ok");
   } catch (err) {
     status("배경 업로드 실패: " + err.message, "err");
   }
 });
 
-// 공통 배경은 '구간 배경이 하나도 없을 때만' 적용됨 — 상태에 맞게 안내(조용한 무시 방지)
+// 공통 배경은 '가사별 배경이 하나도 없을 때만' 적용됨 — 상태에 맞게 안내(조용한 무시 방지)
 let bgName = "";
 function updateBgNote() {
   const el = $("bgName");
@@ -465,18 +1296,19 @@ function updateBgNote() {
   const hasSecImg = sectionsState.some((s) => s.image_id);
   if (bgId) {
     el.textContent = hasSecImg
-      ? `⚠ ${bgName || "공통 배경"} — 구간 배경이 있어 이 공통 배경은 사용되지 않습니다.`
+      ? `⚠ ${bgName || "공통 배경"} — 가사별 배경이 있어 이 공통 배경은 사용되지 않습니다.`
       : `${bgName || "업로드된 배경"} 적용됨.`;
   } else {
     el.textContent = hasSecImg
-      ? "구간 배경을 사용합니다. (공통 배경은 구간 이미지가 하나도 없을 때만 적용)"
-      : "선택하지 않으면 구간 이미지 또는 배경색을 씁니다.";
+      ? "가사별 배경을 사용합니다. (공통 배경은 가사별 이미지가 하나도 없을 때만 적용)"
+      : "선택하지 않으면 가사별 이미지 또는 배경색을 씁니다.";
   }
 }
 
 $("srtBtn").addEventListener("click", async () => {
   if (!scenes.length) return status("먼저 정렬을 완료하세요.", "err");
   if (hasTimingIssues()) return status("시작/끝 시간이 맞지 않는 줄을 먼저 고치세요.", "err");
+  saveAutosaveNow();
 
   try {
     const res = await fetch("/api/srt", {
@@ -502,6 +1334,7 @@ $("srtBtn").addEventListener("click", async () => {
 
 let renderJobId = null;
 let renderES = null;
+let isRendering = false;
 
 function showRenderProgress(frac) {
   $("renderProgress").classList.remove("hidden");
@@ -519,11 +1352,11 @@ function endRender() {
     renderES = null;
   }
   renderJobId = null;
-  $("renderBtn").disabled = false;
+  isRendering = false;
   updateActionState();
 }
 
-function renderResults(videos) {
+function renderResults(videos, mode = "final") {
   const box = $("result");
   box.innerHTML = "";
   if (!videos.length) {
@@ -533,27 +1366,35 @@ function renderResults(videos) {
   videos.forEach((v) => {
     const item = document.createElement("div");
     item.className = "result-item";
+    const isPreview = mode === "preview" || v.preview;
     if (v.aspect) {
       const tag = document.createElement("div");
       tag.className = "muted";
-      tag.textContent = v.aspect;
+      tag.textContent = `${isPreview ? "완성 미리보기" : "최종 MP4"} · ${v.aspect}`;
       item.appendChild(tag);
     }
     const vid = document.createElement("video");
     vid.controls = true;
     vid.src = v.video_url;
-    const a = document.createElement("a");
-    a.className = "download-link";
-    a.href = v.video_url;
-    a.download = "music_video" + (v.aspect ? "_" + v.aspect.replace(":", "x") : "") + ".mp4";
-    a.textContent = "영상 다운로드";
-    item.append(vid, a);
+    if (isPreview) {
+      const note = document.createElement("div");
+      note.className = "muted";
+      note.textContent = "미리보기 확인 후 수정하거나 최종 MP4 만들기를 진행하세요.";
+      item.append(vid, note);
+    } else {
+      const a = document.createElement("a");
+      a.className = "download-link";
+      a.href = v.video_url;
+      a.download = "music_video" + (v.aspect ? "_" + v.aspect.replace(":", "x") : "") + ".mp4";
+      a.textContent = "영상 다운로드";
+      item.append(vid, a);
+    }
     box.appendChild(item);
   });
   box.classList.remove("hidden");
 }
 
-function listenRenderJob(jid) {
+function listenRenderJob(jid, mode = "final") {
   if (renderES) renderES.close();
   renderES = new EventSource(withBase(`/api/jobs/${jid}/events`)); // EventSource는 fetch 오버라이드 밖이라 명시 보정
   renderES.onmessage = (ev) => {
@@ -569,10 +1410,15 @@ function listenRenderJob(jid) {
       const vids = r.videos && r.videos.length
         ? r.videos
         : (r.video_url ? [{ aspect: "", video_url: r.video_url }] : []);
-      renderResults(vids);
+      renderResults(vids, mode);
       hideRenderProgress();
       endRender();
-      status(`영상 생성 완료 (${vids.length}개). 아래에서 확인하세요.`, "ok");
+      status(
+        mode === "preview"
+          ? "완성 미리보기 생성 완료. 아래에서 먼저 확인하세요."
+          : `영상 생성 완료 (${vids.length}개). 아래에서 확인하세요.`,
+        "ok"
+      );
     } else if (j.status === "error") {
       hideRenderProgress();
       endRender();
@@ -582,7 +1428,7 @@ function listenRenderJob(jid) {
       endRender();
       status("렌더를 취소했습니다.", "ok");
     } else {
-      busy(`영상 합성 중… ${Math.round((j.progress || 0) * 100)}%`);
+      busy(`${mode === "preview" ? "완성 미리보기 생성 중" : "영상 합성 중"}… ${Math.round((j.progress || 0) * 100)}%`);
     }
   };
   renderES.onerror = () => {
@@ -597,8 +1443,8 @@ function listenRenderJob(jid) {
           const vids = r.videos && r.videos.length
             ? r.videos
             : (r.video_url ? [{ aspect: "", video_url: r.video_url }] : []);
-          renderResults(vids);
-          status(`영상 생성 완료 (${vids.length}개).`, "ok");
+          renderResults(vids, mode);
+          status(mode === "preview" ? "완성 미리보기 생성 완료." : `영상 생성 완료 (${vids.length}개).`, "ok");
         } else if (j.status === "error") {
           status("영상 생성 실패: " + (j.error || ""), "err");
         } else {
@@ -620,14 +1466,7 @@ $("cancelRenderBtn").addEventListener("click", async () => {
   }
 });
 
-$("renderBtn").addEventListener("click", async () => {
-  if (!audioId || !scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
-  if (hasTimingIssues()) return status("시작/끝 시간이 맞지 않는 줄을 먼저 고치세요.", "err");
-
-  $("renderBtn").disabled = true;
-  showRenderProgress(0);
-  busy("영상 합성 준비 중…");
-
+function buildRenderPayload(preview = false) {
   // 자막 off 구간의 줄은 자막에서 제외
   const offIds = new Set();
   sectionsState.forEach((s) => {
@@ -635,52 +1474,77 @@ $("renderBtn").addEventListener("click", async () => {
   });
   const subScenes = scenes.filter((s) => !offIds.has(s.id));
   const primary = getAspect();
-  const aspects = $("alsoShorts").checked ? [...new Set([primary, "9:16"])] : [primary];
+  const aspects = preview
+    ? [primary]
+    : ($("alsoShorts").checked ? [...new Set([primary, "9:16"])] : [primary]);
+
+  return {
+    audio_id: audioId,
+    scenes: subScenes,
+    aspect: primary,
+    aspects,
+    preview,
+    bg_id: bgId,
+    bg_color: $("bgColor").value,
+    font_size: Number($("fontSize").value) || 48,
+    subtitle_style: $("subtitleStyle").value,
+    subtitle_pos: $("subtitlePos").value,
+    subtitle_align: $("subtitleAlign").value,
+    subtitle_offset_x: subtitleOffsets().x,
+    subtitle_offset_y: subtitleOffsets().y,
+    karaoke_enabled: karaokeEnabled(),
+    font: $("fontSelect").value,
+    text_color: $("textColor").value,
+    hi_color: $("hiColor").value,
+    outline_color: $("outlineColor").value,
+    transition: $("transition").value,
+    transition_dur: Number($("transitionDur").value) || 0.8,
+    ken_burns: Number($("kenBurns").value) || 0,
+    intro_fade: $("introOutro").checked ? (Number($("introFade").value) || 0) : 0,
+    outro_fade: $("introOutro").checked ? (Number($("outroFade").value) || 0) : 0,
+    intro_title: $("introTitle").checked ? $("songTitle").value.trim() : "",
+    intro_title_dur: Number($("introTitleDur").value) || 3.0,
+    outro_title: $("outroTitle").checked ? $("songTitle").value.trim() : "",
+    outro_title_dur: Number($("outroTitleDur").value) || 3.0,
+    audio_delay_sec: timelineAudioOffset(),
+    sections: sectionBackgroundTimeline(),
+  };
+}
+
+async function startRender(preview = false) {
+  if (!audioId || !scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
+  if (hasTimingIssues()) return status("시작/끝 시간이 맞지 않는 줄을 먼저 고치세요.", "err");
+  saveAutosaveNow();
+
+  isRendering = true;
+  updateActionState();
+  showRenderProgress(0);
+  busy(preview ? "완성 미리보기 렌더 준비 중…" : "최종 MP4 합성 준비 중…");
 
   try {
     const res = await fetch("/api/render", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        audio_id: audioId,
-        scenes: subScenes,
-        aspect: primary,
-        aspects,
-        bg_id: bgId,
-        bg_color: $("bgColor").value,
-        font_size: Number($("fontSize").value) || 48,
-        subtitle_style: $("subtitleStyle").value,
-        subtitle_pos: $("subtitlePos").value,
-        font: $("fontSelect").value,
-        text_color: $("textColor").value,
-        hi_color: $("hiColor").value,
-        outline_color: $("outlineColor").value,
-        transition: $("transition").value,
-        transition_dur: Number($("transitionDur").value) || 0.8,
-        ken_burns: Number($("kenBurns").value) || 0,
-        intro_fade: $("introOutro").checked ? (Number($("introFade").value) || 0) : 0,
-        outro_fade: $("introOutro").checked ? (Number($("outroFade").value) || 0) : 0,
-        intro_title: $("introTitle").checked ? $("songTitle").value.trim() : "",
-        intro_title_dur: Number($("introTitleDur").value) || 3.0,
-        sections: sectionsState
-          .filter((s) => s.image_id)
-          .map((s) => ({ start: s.start, end: s.end, image_id: s.image_id })),
-      }),
+      body: JSON.stringify(buildRenderPayload(preview)),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     renderJobId = data.job_id;
-    listenRenderJob(renderJobId);
+    listenRenderJob(renderJobId, preview ? "preview" : "final");
   } catch (e) {
-    status("영상 생성 실패: " + e.message, "err");
+    status((preview ? "미리보기 생성 실패: " : "영상 생성 실패: ") + e.message, "err");
     hideRenderProgress();
     endRender();
   }
-});
+}
+
+$("previewRenderBtn").addEventListener("click", () => startRender(true));
+$("renderBtn").addEventListener("click", () => startRender(false));
 
 $("alignBtn").addEventListener("click", doAlign);
 
 window.addEventListener("beforeunload", (e) => {
+  saveAutosaveNow();
   if (localAudioUrl) URL.revokeObjectURL(localAudioUrl);
   // 렌더 진행 중이거나 정렬 중이면 새로고침/닫기 전에 경고(작업·결과 유실 방지).
   if (renderJobId || isAligning) {
@@ -689,11 +1553,313 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
-// ---- 2차: 구간별 배경 이미지 (후보 N장 생성 → 1장 선택) ----
-const CANDIDATE_COUNT = 4;
+// ---- 2차: 가사별 배경 이미지 (선택한 프록시로 1장 생성) ----
+const CANDIDATE_COUNT = 1;
 
 function isVideoUrl(u) {
   return /\.(mp4|mov|webm|mkv|m4v)(\?|$)/i.test(u || "");
+}
+
+function inheritedMediaForIndex(index) {
+  for (let i = Math.min(index, sectionsState.length - 1); i >= 0; i--) {
+    const s = sectionsState[i];
+    if (s && s.image_url) return { section: s, inherited: i !== index };
+  }
+  return { section: null, inherited: false };
+}
+
+function sectionBackgroundTimeline() {
+  const timeline = [];
+  let currentId = "";
+  sectionsState.forEach((s) => {
+    if (s.image_id) currentId = s.image_id;
+    if (!currentId) return;
+    const last = timeline[timeline.length - 1];
+    if (last && last.image_id === currentId) {
+      last.end = s.end;
+    } else {
+      timeline.push({ start: s.start, end: s.end, image_id: currentId });
+    }
+  });
+  return timeline;
+}
+
+function timelineScale() {
+  const total = Math.max(1, scenes.reduce((m, s) => Math.max(m, Number(s.end) || 0), Number(audio.duration) || 0));
+  return total > 420 ? 14 : total > 240 ? 18 : 28;
+}
+
+function sectionIndexForSceneIndex(sceneIndex) {
+  const scene = scenes[sceneIndex];
+  if (!scene) return -1;
+  return sectionsState.findIndex((s) => (s.scene_ids || []).includes(scene.id));
+}
+
+function ensureTimelineSections() {
+  if (!scenes.length) return false;
+  if (!sectionsState.length) {
+    sectionsState = scenes
+      .filter((scene) => String(scene.text || "").trim())
+      .map((scene, index) => sectionFromScene(scene, index));
+    return true;
+  }
+  return syncSectionTimes();
+}
+
+function timelineSectionForSceneIndex(sceneIndex, create = false) {
+  if (create) ensureTimelineSections();
+  const idx = sectionIndexForSceneIndex(sceneIndex);
+  return idx >= 0 ? sectionsState[idx] : null;
+}
+
+function timelineLabel(scene, index) {
+  const txt = String((scene && scene.text) || "").replace(/\s+/g, " ").trim();
+  return txt ? `${index + 1}. ${txt.slice(0, 38)}` : `${index + 1}. 빈 가사`;
+}
+
+function clampOutputIndex(index) {
+  if (!scenes.length) return 0;
+  return Math.max(0, Math.min(scenes.length - 1, Number(index) || 0));
+}
+
+function selectedOutputScene() {
+  outputEditIndex = clampOutputIndex(outputEditIndex);
+  return scenes[outputEditIndex] || null;
+}
+
+function renderOutputTimeline() {
+  const editor = $("timelineEditor");
+  if (!editor) return;
+  const select = $("timelineSelect");
+  const track = $("timelineTrack");
+  const info = $("timelineInfo");
+  if (!select || !track) return;
+
+  outputEditIndex = clampOutputIndex(outputEditIndex);
+  select.innerHTML = "";
+  track.innerHTML = "";
+
+  if (!scenes.length) {
+    select.disabled = true;
+    ["timelinePrev", "timelinePlay", "timelineNext", "timelineStart", "timelineEnd",
+     "timelineText", "timelinePrompt", "timelineSubtitle", "timelineSetStart",
+     "timelineSetEnd", "timelineUpload", "timelineGenerate", "timelineChat", "timelineClearBg"].forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = true;
+    });
+    if (info) info.textContent = "0줄";
+    if ($("timelineBgNote")) $("timelineBgNote").textContent = "";
+    renderStageTimeline();
+    return;
+  }
+
+  select.disabled = false;
+  ["timelinePrev", "timelinePlay", "timelineNext", "timelineStart", "timelineEnd",
+   "timelineText", "timelinePrompt", "timelineSubtitle", "timelineSetStart",
+   "timelineSetEnd", "timelineUpload", "timelineGenerate", "timelineChat", "timelineClearBg"].forEach((id) => {
+    const el = $(id);
+    if (el) el.disabled = false;
+  });
+
+  const scale = timelineScale();
+  scenes.forEach((scene, index) => {
+    const opt = document.createElement("option");
+    opt.value = String(index);
+    opt.textContent = timelineLabel(scene, index);
+    select.appendChild(opt);
+
+    const secIdx = sectionIndexForSceneIndex(index);
+    const sec = secIdx >= 0 ? sectionsState[secIdx] : null;
+    const media = secIdx >= 0 ? inheritedMediaForIndex(secIdx) : { section: null, inherited: false };
+    const clip = document.createElement("button");
+    clip.type = "button";
+    clip.className = "timeline-clip";
+    clip.dataset.i = index;
+    clip.style.setProperty("--clip-w", Math.max(52, Math.round(Math.max(0.2, scene.end - scene.start) * scale)) + "px");
+    clip.classList.toggle("selected", index === outputEditIndex);
+    clip.classList.toggle("subtitle-off", !!(sec && sec.subtitle === false));
+    clip.classList.toggle("inherited", !!media.inherited);
+    clip.classList.toggle("no-bg", !(media.section && media.section.image_url));
+    clip.innerHTML = `<b>${escapeHtml(String(scene.text || "").replace(/\s+/g, " ") || "빈 가사")}</b><small>${fmt(scene.start)}-${fmt(scene.end)}</small>`;
+    track.appendChild(clip);
+  });
+
+  const playhead = document.createElement("div");
+  playhead.id = "timelinePlayhead";
+  playhead.className = "timeline-playhead";
+  track.appendChild(playhead);
+  select.value = String(outputEditIndex);
+  if (info) info.textContent = `${outputEditIndex + 1}/${scenes.length} · ${fmt((selectedOutputScene() || {}).start || 0)}`;
+  fillOutputTimelineEditor();
+  updateOutputTimelineCurrent();
+  renderStageTimeline();
+}
+
+function fillOutputTimelineEditor() {
+  const scene = selectedOutputScene();
+  if (!scene || !$("timelineStart")) return;
+  const sec = timelineSectionForSceneIndex(outputEditIndex, false);
+  const secIdx = sectionIndexForSceneIndex(outputEditIndex);
+  const media = secIdx >= 0 ? inheritedMediaForIndex(secIdx) : { section: null, inherited: false };
+  $("timelineStart").value = fmt(scene.start);
+  $("timelineEnd").value = fmt(scene.end);
+  $("timelineText").value = scene.text || "";
+  $("timelineSubtitle").checked = !(sec && sec.subtitle === false);
+  $("timelinePrompt").value = sec ? (sec.image_prompt || "") : defaultImagePrompt(scene);
+  const note = $("timelineBgNote");
+  if (note) {
+    if (sec && sec.image_id) note.textContent = "이 구간 배경이 지정되어 있습니다.";
+    else if (media.section && media.inherited) note.textContent = "배경 없음: 직전 이미지를 계속 사용합니다.";
+    else note.textContent = "배경 없음: 공통 배경 또는 배경색을 사용합니다.";
+  }
+}
+
+function updateOutputTimelineCurrent() {
+  const track = $("timelineTrack");
+  if (!track || !scenes.length) return;
+  const t = currentTimelineTime();
+  let left = 0;
+  const scale = timelineScale();
+  document.querySelectorAll(".timeline-clip").forEach((clip) => {
+    const sc = scenes[Number(clip.dataset.i)];
+    clip.classList.toggle("current", Boolean(sc && t >= sc.start && t < sc.end));
+  });
+  for (const scene of scenes) {
+    if (t <= scene.start) break;
+    const dur = Math.max(0.2, Math.min(t, scene.end) - scene.start);
+    left += Math.max(52, Math.round(Math.max(0.2, scene.end - scene.start) * scale))
+      * Math.max(0, Math.min(1, dur / Math.max(0.2, scene.end - scene.start)));
+    if (t < scene.end) break;
+  }
+  const ph = $("timelinePlayhead");
+  if (ph) ph.style.left = Math.round(left + 10) + "px";
+}
+
+function renderStageTimeline() {
+  const wrap = $("stageTimeline");
+  const track = $("stageTimelineTrack");
+  const info = $("stageTimelineInfo");
+  if (!wrap || !track) return;
+
+  const visible = currentStep >= 2 && scenes.length > 0 && !isManualMode();
+  wrap.classList.toggle("hidden", !visible);
+  track.innerHTML = "";
+  if (info) info.textContent = scenes.length ? `${scenes.length}줄` : "0줄";
+  if (!visible) return;
+
+  scenes.forEach((scene, index) => {
+    const secIdx = sectionIndexForSceneIndex(index);
+    const media = secIdx >= 0 ? inheritedMediaForIndex(secIdx) : { section: null, inherited: false };
+    const clip = document.createElement("button");
+    clip.type = "button";
+    clip.className = "stage-timeline-clip";
+    clip.dataset.i = String(index);
+    if (media.section && media.section.image_url && !isVideoUrl(media.section.image_url)) {
+      clip.style.backgroundImage = `url("${media.section.image_url}")`;
+    }
+    clip.classList.toggle("no-bg", !(media.section && media.section.image_url));
+    clip.classList.toggle("inherited", !!media.inherited);
+    const text = String(scene.text || "").replace(/\s+/g, " ").trim() || "빈 가사";
+    clip.title = `${index + 1}. ${text}`;
+    clip.innerHTML = `<span>${index + 1}</span><b>${escapeHtml(text)}</b><small>${fmt(scene.start)}-${fmt(scene.end)}</small>`;
+    track.appendChild(clip);
+  });
+  updateStageTimelineCurrent();
+}
+
+function updateStageTimelineCurrent() {
+  const track = $("stageTimelineTrack");
+  if (!track || !scenes.length) return;
+  const t = currentTimelineTime();
+  let currentIndex = -1;
+  document.querySelectorAll(".stage-timeline-clip").forEach((clip) => {
+    const index = Number(clip.dataset.i);
+    const sc = scenes[index];
+    const isCurrent = Boolean(sc && t >= sc.start && t < sc.end);
+    clip.classList.toggle("current", isCurrent);
+    if (isCurrent) currentIndex = index;
+  });
+  const info = $("stageTimelineInfo");
+  if (info) {
+    info.textContent = currentIndex >= 0
+      ? `${currentIndex + 1}/${scenes.length} · ${fmt(t)}`
+      : `${scenes.length}줄`;
+  }
+}
+
+function selectOutputClip(index, seek = true) {
+  outputEditIndex = clampOutputIndex(index);
+  const scene = selectedOutputScene();
+  renderOutputTimeline();
+  if (scene && seek) seekToTime(scene.start);
+}
+
+function refreshAfterOutputEdit(rerenderRows = true) {
+  syncSectionTimes();
+  if (rerenderRows) renderRows();
+  renderSectionCards();
+  renderChapters();
+  renderOutputTimeline();
+  updatePreview();
+  updateActionState();
+  scheduleAutosave();
+}
+
+function updateOutputSceneTiming(field, value) {
+  const scene = selectedOutputScene();
+  if (!scene) return;
+  scene[field] = round2(parseTime(value));
+  if (scene.end <= scene.start) {
+    status("끝 시간은 시작 시간보다 커야 합니다.", "err");
+  }
+  refreshAfterOutputEdit();
+}
+
+function enterManualEditor(pushHash = true) {
+  if (!scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
+  ensureTimelineSections();
+  const t = currentTimelineTime();
+  const activeIndex = scenes.findIndex((s) => t >= s.start && t < s.end);
+  if (activeIndex >= 0) outputEditIndex = activeIndex;
+  const page = $("manualEditorPage");
+  const slot = $("manualStageSlot");
+  if (!page || !slot) return;
+  syncImageProvider(($("imageProvider") && $("imageProvider").value) || getImageProvider());
+  syncAspect(getAspect(), false);
+  page.classList.remove("hidden");
+  document.body.classList.add("manual-mode");
+  slot.appendChild($("stage"));
+  $("stage").classList.remove("hidden");
+  renderOutputTimeline();
+  setPreviewAspect();
+  updatePreview();
+  updateCurrentLine();
+  scheduleAutosave();
+  if (pushHash && location.hash !== "#manual-editor") {
+    history.pushState(null, "", "#manual-editor");
+  }
+}
+
+function exitManualEditor(updateHash = true) {
+  const page = $("manualEditorPage");
+  const home = $("stageHome");
+  if (!page || !home) return;
+  home.after($("stage"));
+  page.classList.add("hidden");
+  document.body.classList.remove("manual-mode");
+  $("stage").classList.toggle("hidden", currentStep < 2);
+  setPreviewAspect();
+  updatePreview();
+  renderOutputTimeline();
+  scheduleAutosave();
+  if (updateHash && location.hash === "#manual-editor") {
+    history.pushState(null, "", location.pathname + location.search);
+  }
+}
+
+function sectionTitle(s, index = 0) {
+  const title = lyricLabel((s && s.lines) || [], index) || (s && s.label) || `구간 ${index + 1}`;
+  return title.length > 36 ? title.slice(0, 36) + "..." : title;
 }
 
 function renderSectionCards() {
@@ -703,9 +1869,11 @@ function renderSectionCards() {
     const empty = document.createElement("div");
     empty.className = "sections-empty";
     empty.textContent = scenes.length
-      ? "‘구간 나누기’를 눌러 시작하세요. 구간마다 AI 배경을 만들거나 이미지를 올립니다."
+      ? "‘전체 이미지 자동생성’을 누르면 가사별 배경 슬롯과 이미지를 한 번에 만듭니다. 직접 올릴 수도 있습니다."
       : "먼저 1단계에서 자동 정렬을 완료하세요.";
     box.appendChild(empty);
+    renderOutputTimeline();
+    renderChapters();
     recordHistorySoon();
     return;
   }
@@ -716,22 +1884,32 @@ function renderSectionCards() {
 
     const thumb = document.createElement("div");
     thumb.className = "section-thumb";
-    if (s.image_url) {
-      if (isVideoUrl(s.image_url)) {
+    const media = inheritedMediaForIndex(i);
+    const mediaSec = media.section;
+    if (media.inherited) thumb.classList.add("inherited");
+    if (mediaSec && mediaSec.image_url) {
+      if (isVideoUrl(mediaSec.image_url)) {
         thumb.classList.add("is-video");
         const vb = document.createElement("span");
         vb.className = "video-badge";
-        vb.textContent = "🎬 영상";
+        vb.textContent = media.inherited ? "영상 · 이전" : "영상";
         thumb.appendChild(vb);
       } else {
-        thumb.style.backgroundImage = `url('${s.image_url}?t=${Date.now()}')`;
+        thumb.style.backgroundImage = `url('${mediaSec.image_url}?t=${Date.now()}')`;
+      }
+      if (media.inherited) {
+        const ib = document.createElement("span");
+        ib.className = "inherit-badge";
+        ib.textContent = "이전";
+        thumb.appendChild(ib);
       }
     }
 
     const head = document.createElement("div");
     head.className = "section-head";
     const label = document.createElement("b");
-    label.textContent = s.label || "";
+    label.textContent = sectionTitle(s, i);
+    label.title = ((s.lines || []).filter(Boolean).join("\n") || s.label || "");
     const right = document.createElement("span");
     right.className = "section-head-right";
     const subLabel = document.createElement("label");
@@ -759,12 +1937,16 @@ function renderSectionCards() {
     const gen = document.createElement("button");
     gen.type = "button";
     gen.className = "mini-btn gen";
-    gen.textContent = `AI ${CANDIDATE_COUNT}장`;
+    gen.textContent = imageProviderButtonLabel();
+    const chat = document.createElement("button");
+    chat.type = "button";
+    chat.className = "mini-btn image-chat";
+    chat.textContent = "이미지 채팅";
     const up = document.createElement("button");
     up.type = "button";
     up.className = "mini-btn upload";
     up.textContent = "업로드";
-    up.title = "내 이미지/영상을 이 구간 배경으로";
+    up.title = "내 이미지/영상을 이 가사 배경으로";
     const setRef = document.createElement("button");
     setRef.type = "button";
     setRef.className = "mini-btn anchor-set";
@@ -775,7 +1957,7 @@ function renderSectionCards() {
     file.accept = "image/*,video/*";
     file.className = "sec-file";
     file.hidden = true;
-    rowEl.append(input, gen, up, setRef, file);
+    rowEl.append(input, gen, chat, up, setRef, file);
 
     const body = document.createElement("div");
     body.className = "section-body";
@@ -816,8 +1998,10 @@ function renderSectionCards() {
     box.appendChild(card);
   });
   scheduleAutosave();
+  updateCurrentLine();
   updatePreview();
   updateBgNote();
+  renderOutputTimeline();
   recordHistorySoon();
 }
 
@@ -825,7 +2009,7 @@ async function groupSections() {
   if (!scenes.length) return status("먼저 자동 정렬을 완료하세요.", "err");
   const btn = $("genImagesBtn");
   btn.disabled = true;
-  busy("구간을 나누는 중입니다.");
+  busy("가사별 배경 슬롯을 만드는 중입니다.");
   try {
     const res = await fetch("/api/images", {
       method: "POST",
@@ -845,12 +2029,12 @@ async function groupSections() {
     renderSectionCards();
     renderAnchor();
     renderChapters();
-    status(`${sectionsState.length}개 구간으로 나눴습니다. 가사로 프롬프트를 자동 작성합니다…`, "ok");
-    // 구간 구조는 즉시 보여준다. 프롬프트 자동작성은 블로킹하지 않고 백그라운드로 진행
-    // (실패해도 기본 프롬프트 유지). 그래서 '구간 나누기' 버튼이 어댑터 왕복에 묶이지 않는다.
+    status(`${sectionsState.length}개 가사 줄에 배경 슬롯을 만들었습니다. 가사로 프롬프트를 자동 작성합니다…`, "ok");
+    // 가사별 구조는 즉시 보여준다. 프롬프트 자동작성은 블로킹하지 않고 백그라운드로 진행
+    // (실패해도 기본 프롬프트 유지). 그래서 '가사별 나누기' 버튼이 어댑터 왕복에 묶이지 않는다.
     autoWritePrompts(true);
   } catch (e) {
-    status("구간 나누기 실패: " + e.message, "err");
+    status("가사별 나누기 실패: " + e.message, "err");
   } finally {
     btn.disabled = false;
   }
@@ -859,7 +2043,9 @@ async function groupSections() {
 async function genCandidates(card, s, genBtn) {
   s._generating = true;
   renderSectionCards(); // 카드에 'AI 생성 중…' 오버레이 표시
-  busy(`${s.label} 배경 후보 ${CANDIDATE_COUNT}장 생성 중입니다.`);
+  const idx = card && card.dataset.i != null ? Number(card.dataset.i) : Math.max(0, sectionsState.indexOf(s));
+  const title = sectionTitle(s, idx);
+  busy(`${imageProviderLabel()}로 ${title} 배경을 생성 중입니다.`);
   try {
     const res = await fetch("/api/candidates", {
       method: "POST",
@@ -868,8 +2054,9 @@ async function genCandidates(card, s, genBtn) {
         prompt: s.image_prompt,
         aspect: getAspect(),
         count: CANDIDATE_COUNT,
-        label: s.label,
+        label: title,
         ref_image_id: useRef && anchor ? anchor.image_id : "",
+        provider: getImageProvider(),
       }),
     });
     const data = await res.json();
@@ -883,7 +2070,7 @@ async function genCandidates(card, s, genBtn) {
       if (!anchor) setAnchor(s);
     }
     const refNote = useRef && anchor ? " (참조 적용)" : "";
-    status(`${s.label} 후보 ${s.candidates.length}장 생성 완료${refNote}. 1장을 클릭해 선택하세요.`, "ok");
+    status(`${title} 배경 생성 완료${refNote}.`, "ok");
   } catch (err) {
     status("이미지 생성 실패: " + err.message, "err");
   } finally {
@@ -893,17 +2080,139 @@ async function genCandidates(card, s, genBtn) {
   }
 }
 
+let imageChatSection = null;
+let imageChatCandidate = null;
+
+function imageChatSectionIndex() {
+  return imageChatSection ? Math.max(0, sectionsState.indexOf(imageChatSection)) : 0;
+}
+
+function addImageChatMessage(role, text) {
+  const box = $("imageChatMessages");
+  if (!box) return;
+  const msg = document.createElement("div");
+  msg.className = `image-chat-msg ${role}`;
+  msg.textContent = text;
+  box.appendChild(msg);
+  box.scrollTop = box.scrollHeight;
+}
+
+function imageChatPromptWithInstruction(prompt, instruction) {
+  const base = String(prompt || "").trim();
+  const next = String(instruction || "").replace(/\s+/g, " ").trim();
+  if (!next) return base;
+  if (!base) return next;
+  return `${base}, ${next}`;
+}
+
+function setImageChatPreview(candidate) {
+  const box = $("imageChatPreview");
+  if (!box) return;
+  imageChatCandidate = candidate || null;
+  box.classList.toggle("has-image", !!candidate);
+  box.style.backgroundImage = candidate && candidate.image_url ? `url('${candidate.image_url}')` : "";
+  if ($("imageChatApply")) $("imageChatApply").disabled = !candidate;
+}
+
+function openImageChat(s, index = -1) {
+  if (!s) return status("이미지를 만들 구간을 선택하세요.", "err");
+  imageChatSection = s;
+  imageChatCandidate = null;
+  const i = index >= 0 ? index : imageChatSectionIndex();
+  const title = sectionTitle(s, i);
+  $("imageChatTitle").textContent = title;
+  $("imageChatMeta").textContent = `${fmt(s.start)}-${fmt(s.end)} · ${imageProviderLabel()}`;
+  $("imageChatProvider").textContent = `생성기: ${imageProviderLabel()} · 현재 프롬프트를 대화로 계속 수정할 수 있습니다.`;
+  $("imageChatPrompt").value = s.image_prompt || defaultImagePrompt({ text: (s.lines || []).join(" ") });
+  $("imageChatMessages").innerHTML = "";
+  addImageChatMessage("assistant", "원하는 분위기, 인물 위치, 색감, 카메라 느낌을 말해주세요. 전송하면 현재 프롬프트에 반영됩니다.");
+  setImageChatPreview(s.image_url ? {
+    image_id: s.image_id,
+    image_url: s.image_url,
+    has_face: !!s.has_face,
+  } : null);
+  $("imageChatApply").disabled = true;
+  $("imageChatModal").classList.remove("hidden");
+  setTimeout(() => $("imageChatInput").focus(), 0);
+}
+
+function closeImageChat() {
+  const modal = $("imageChatModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function generateImageFromChat() {
+  const s = imageChatSection;
+  if (!s) return status("이미지를 만들 구간을 선택하세요.", "err");
+  const prompt = $("imageChatPrompt").value.trim();
+  if (!prompt) return status("프롬프트를 입력하세요.", "err");
+  const i = imageChatSectionIndex();
+  const title = sectionTitle(s, i);
+  $("imageChatGenerate").disabled = true;
+  $("imageChatGenerate").textContent = "생성 중…";
+  busy(`${imageProviderLabel()}로 채팅 이미지 생성 중…`);
+  try {
+    const refId = imageChatCandidate && imageChatCandidate.image_id
+      ? imageChatCandidate.image_id
+      : (s.image_id || (useRef && anchor ? anchor.image_id : ""));
+    const res = await fetch("/api/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        aspect: getAspect(),
+        count: 1,
+        label: title,
+        ref_image_id: refId,
+        provider: getImageProvider(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const candidate = (data.candidates || [])[0];
+    if (!candidate) throw new Error("생성된 이미지가 없습니다.");
+    setImageChatPreview(candidate);
+    addImageChatMessage("assistant", "이미지를 생성했습니다. 더 바꾸고 싶으면 원하는 수정 내용을 다시 보내거나, 마음에 들면 적용을 누르세요.");
+    status(`${title} 채팅 이미지 생성 완료.`, "ok");
+  } catch (err) {
+    status("이미지 채팅 생성 실패: " + err.message, "err");
+  } finally {
+    $("imageChatGenerate").disabled = false;
+    $("imageChatGenerate").textContent = "이미지 생성";
+  }
+}
+
+function applyImageChatCandidate() {
+  const s = imageChatSection;
+  const c = imageChatCandidate;
+  if (!s || !c) return;
+  s.image_prompt = $("imageChatPrompt").value.trim() || s.image_prompt;
+  s.image_id = c.image_id;
+  s.image_url = c.image_url;
+  s.has_face = !!c.has_face;
+  const existing = (s.candidates || []).filter((item) => item.image_id !== c.image_id);
+  s.candidates = [c, ...existing].slice(0, 4);
+  if (!anchor) setAnchor(s);
+  closeImageChat();
+  renderSectionCards();
+  renderAnchor();
+  renderOutputTimeline();
+  updatePreview();
+  updateCurrentLine();
+  scheduleAutosave();
+  status("채팅으로 만든 이미지를 선택 구간에 적용했습니다.", "ok");
+}
+
 function setAnchor(s) {
+  if (!s || !s.image_id || !s.image_url) return;
   anchor = { image_id: s.image_id, image_url: s.image_url, has_face: !!s.has_face };
+  useRef = true;
   renderAnchor();
 }
 
 function renderAnchor() {
   const bar = $("anchorBar");
-  if (!sectionsState.length) {
-    bar.classList.add("hidden");
-    return;
-  }
+  if (!bar) return;
   bar.classList.remove("hidden");
   const thumb = $("anchorThumb");
   if (anchor && anchor.image_url) {
@@ -915,9 +2224,10 @@ function renderAnchor() {
   } else {
     thumb.style.backgroundImage = "";
     $("anchorLabel").textContent = "참조 없음";
-    $("anchorHint").textContent = "이미지를 선택하면 자동으로 참조가 됩니다.";
+    $("anchorHint").textContent = "참조 이미지를 먼저 생성하거나 업로드할 수 있습니다.";
   }
   $("useRefChk").checked = useRef;
+  if ($("clearAnchorBtn")) $("clearAnchorBtn").disabled = !anchor;
 }
 
 $("useRefChk").addEventListener("change", (e) => {
@@ -927,39 +2237,156 @@ $("useRefChk").addEventListener("change", (e) => {
 $("clearAnchorBtn").addEventListener("click", () => {
   anchor = null;
   renderAnchor();
+  scheduleAutosave();
   status("참조를 해제했습니다.", "ok");
+});
+
+function anchorPrompt() {
+  const style = $("imgStyle").value.trim();
+  const lyricMood = scenes
+    .slice(0, 4)
+    .map((s) => String(s.text || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" / ");
+  return [
+    style || "감성적인 한국 뮤직비디오, 영화적인 조명과 차분한 색감",
+    lyricMood ? `가사 분위기: ${lyricMood}` : "",
+    "전체 영상에 반복 참조할 대표 키비주얼",
+    "일관된 인물 또는 장소, 선명한 중심 피사체, 배경 이미지로 사용 가능",
+    "텍스트, 로고, 자막 없음"
+  ].filter(Boolean).join(". ");
+}
+
+async function generateAnchorImage() {
+  const btn = $("genAnchorBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "생성 중…";
+  }
+  busy(`${imageProviderLabel()}로 참조 이미지를 생성 중입니다.`);
+  try {
+    const res = await fetch("/api/candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: anchorPrompt(),
+        aspect: getAspect(),
+        count: 1,
+        label: "참조 이미지",
+        ref_image_id: useRef && anchor ? anchor.image_id : "",
+        provider: getImageProvider(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const candidate = (data.candidates || [])[0];
+    if (!candidate) throw new Error("생성된 참조 이미지가 없습니다.");
+    setAnchor(candidate);
+    scheduleAutosave();
+    status("참조 이미지를 생성했습니다. 이후 이미지 생성에 이 참조가 적용됩니다.", "ok");
+  } catch (err) {
+    status("참조 이미지 생성 실패: " + err.message, "err");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "참조 생성";
+    }
+  }
+}
+
+async function uploadAnchorImage(file) {
+  if (!file) return;
+  busy("참조 이미지 업로드 중입니다.");
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const res = await fetch("/api/upload-bg", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    setAnchor({
+      image_id: data.bg_id,
+      image_url: data.bg_url || withBase("/data/" + data.bg_id),
+      has_face: !!data.has_face,
+    });
+    scheduleAutosave();
+    status("참조 이미지를 등록했습니다. 이후 이미지 생성에 먼저 적용됩니다.", "ok");
+  } catch (err) {
+    status("참조 이미지 업로드 실패: " + err.message, "err");
+  }
+}
+
+if ($("genAnchorBtn")) $("genAnchorBtn").addEventListener("click", generateAnchorImage);
+if ($("uploadAnchorBtn")) $("uploadAnchorBtn").addEventListener("click", () => $("anchorFile").click());
+if ($("anchorFile")) $("anchorFile").addEventListener("change", (e) => {
+  uploadAnchorImage(e.target.files && e.target.files[0]);
+  e.target.value = "";
 });
 
 $("genImagesBtn").addEventListener("click", groupSections);
 
 let genAllAborted = false;
+async function prepareSectionsForAutoImages() {
+  if (!scenes.length) {
+    status("먼저 자동 정렬을 완료하세요.", "err");
+    return false;
+  }
+  const created = !sectionsState.length;
+  if (created) {
+    ensureTimelineSections();
+  } else {
+    syncSectionTimes();
+  }
+  if (!sectionsState.length) {
+    status("이미지를 생성할 가사 줄이 없습니다.", "err");
+    return false;
+  }
+  if (created) {
+    renderSectionCards();
+    renderAnchor();
+    renderChapters();
+    updatePreview();
+  }
+  return true;
+}
+
 async function genAllCandidates() {
-  if (!sectionsState.length) return status("먼저 구간을 나누세요.", "err");
+  if (!(await prepareSectionsForAutoImages())) return;
   const btn = $("genAllBtn");
   genAllAborted = false;
   btn.textContent = "중지";
   btn.dataset.mode = "abort"; // 생성 중엔 같은 버튼이 '중지'로
   $("genImagesBtn").disabled = true;
+  if ($("autoPromptBtn")) $("autoPromptBtn").disabled = true;
+  if ($("beatSnapBtn")) $("beatSnapBtn").disabled = true;
   $("genAllProgress").classList.remove("hidden");
   setGenAllProgress(0);
   let ok = 0;
   try {
+    busy("전체 이미지 자동생성 준비 중… 가사별 프롬프트를 확인합니다.");
+    await autoWritePrompts(true);
+    if (genAllAborted) {
+      status("전체 이미지 자동생성을 중지했습니다.", "ok");
+      return;
+    }
+
     for (let i = 0; i < sectionsState.length; i++) {
       if (genAllAborted) break;
       const s = sectionsState[i];
+      const title = sectionTitle(s, i);
       s._generating = true;
       renderSectionCards();
-      busy(`전체 배경 생성 중… ${i + 1}/${sectionsState.length} · ${s.label}`);
+      busy(`전체 이미지 자동생성 중… ${i + 1}/${sectionsState.length} · ${title}`);
       try {
         const res = await fetch("/api/candidates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: s.image_prompt,
+            prompt: s.image_prompt || defaultImagePrompt((scenes || [])[i]),
             aspect: getAspect(),
             count: CANDIDATE_COUNT,
-            label: s.label,
+            label: title,
             ref_image_id: useRef && anchor ? anchor.image_id : "",
+            provider: getImageProvider(),
           }),
         });
         const data = await res.json();
@@ -982,21 +2409,27 @@ async function genAllCandidates() {
     }
     const total = sectionsState.length;
     if (genAllAborted) {
-      status(`전체 생성을 중지했습니다. (${ok}/${total} 구간 완료)`, "ok");
+      status(`전체 이미지 자동생성을 중지했습니다. (${ok}/${total}개 완료)`, "ok");
     } else if (ok === 0) {
-      status("배경을 한 장도 생성하지 못했습니다. 프롬프트·네트워크를 확인하고 다시 시도하세요.", "err");
+      status("이미지를 한 장도 생성하지 못했습니다. 프롬프트·네트워크를 확인하고 다시 시도하세요.", "err");
     } else if (ok < total) {
-      status(`${ok}/${total} 구간만 생성됐습니다. 실패한 구간은 ‘AI ${CANDIDATE_COUNT}장’으로 다시 시도하세요.`, "err");
+      status(`${ok}/${total}개만 생성됐습니다. 실패한 가사는 ‘이미지 생성’으로 다시 시도하세요.`, "err");
     } else {
-      status("전체 구간 배경 생성 완료. 마음에 안 드는 구간만 다시 고르세요.", "ok");
+      status("전체 가사 이미지 자동생성 완료. 마음에 안 드는 줄만 다시 생성하세요.", "ok");
     }
   } catch (e) {
-    status("전체 배경 생성 중 오류: " + e.message, "err");
+    status("전체 이미지 자동생성 중 오류: " + e.message, "err");
   } finally {
-    btn.textContent = "전체 생성";
+    sectionsState.forEach((s) => { s._generating = false; });
+    btn.textContent = "전체 이미지 자동생성";
     btn.dataset.mode = "";
-    $("genImagesBtn").disabled = false;
+    $("genImagesBtn").disabled = !scenes.length;
+    if ($("autoPromptBtn")) $("autoPromptBtn").disabled = false;
+    if ($("beatSnapBtn")) $("beatSnapBtn").disabled = false;
     $("genAllProgress").classList.add("hidden");
+    renderSectionCards();
+    renderAnchor();
+    renderChapters();
   }
 }
 function setGenAllProgress(frac) {
@@ -1013,10 +2446,10 @@ $("genAllBtn").addEventListener("click", () => {
   genAllCandidates();
 });
 
-// 가사 → AI 이미지 프롬프트 자동작성 (마브 어댑터). 가사는 그대로, 배경 설명만 생성.
+// 가사 → 한글 이미지 프롬프트 자동작성. 실제 생성용 영어 변환은 백엔드에서 처리한다.
 async function autoWritePrompts(silent) {
   if (!sectionsState.length) {
-    if (!silent) status("먼저 구간을 나누세요.", "err");
+    if (!silent) status("먼저 가사별 나누기를 실행하세요.", "err");
     return;
   }
   const btn = $("autoPromptBtn");
@@ -1031,7 +2464,7 @@ async function autoWritePrompts(silent) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        sections: target.map((s) => ({ label: s.label, lines: s.lines || [] })),
+        sections: target.map((s, i) => ({ label: sectionTitle(s, i), lines: s.lines || [] })),
         style: $("imgStyle").value,
       }),
     });
@@ -1051,7 +2484,7 @@ async function autoWritePrompts(silent) {
     });
     renderSectionCards();
     const extra = kept ? ` (직접 수정한 ${kept}개는 유지)` : "";
-    status(`${n}개 구간 프롬프트를 자동 작성했습니다${extra}. 수정 후 ‘AI ${CANDIDATE_COUNT}장’으로 생성하세요.`, "ok");
+    status(`${n}개 가사 한글 프롬프트를 자동 작성했습니다${extra}. 수정 후 ‘이미지 생성’으로 생성하세요.`, "ok");
   } catch (e) {
     // 실패해도 기본(한국어) 프롬프트가 그대로라 진행 가능. 자동 경로에선 스피너만 정리.
     if (!silent) status("프롬프트 자동작성 실패: " + e.message, "err");
@@ -1130,6 +2563,7 @@ $("sections").addEventListener("click", (e) => {
     s.image_url = pick.dataset.imageUrl;
     s.has_face = pick.dataset.hasFace === "1";
     if (!anchor) setAnchor(s); // 첫 선택을 자동 참조로 지정
+    seekToTime(s.start);
     renderSectionCards();
     return;
   }
@@ -1142,14 +2576,164 @@ $("sections").addEventListener("click", (e) => {
 
   const setRefBtn = e.target.closest(".anchor-set");
   if (setRefBtn) {
-    if (!s.image_id) return status("먼저 이 구간 이미지를 선택하세요.", "err");
+    if (!s.image_id) return status("먼저 이 가사 이미지를 선택하세요.", "err");
     setAnchor(s);
     status(anchor.has_face ? "인물 참조로 지정했습니다." : "컨셉 참조로 지정했습니다.", "ok");
     return;
   }
 
   const genBtn = e.target.closest(".gen");
-  if (genBtn) genCandidates(card, s, genBtn);
+  if (genBtn) {
+    genCandidates(card, s, genBtn);
+    return;
+  }
+
+  const chatBtn = e.target.closest(".image-chat");
+  if (chatBtn) {
+    openImageChat(s, Number(card.dataset.i));
+    return;
+  }
+
+  if (!e.target.closest("button,input,textarea,select,label")) {
+    seekToTime(s.start);
+  }
+});
+
+if ($("imageChatClose")) $("imageChatClose").addEventListener("click", closeImageChat);
+if ($("imageChatModal")) {
+  $("imageChatModal").addEventListener("click", (e) => {
+    if (e.target === $("imageChatModal")) closeImageChat();
+  });
+}
+if ($("imageChatForm")) {
+  $("imageChatForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("imageChatInput");
+    const text = input.value.trim();
+    if (!text) return;
+    addImageChatMessage("user", text);
+    $("imageChatPrompt").value = imageChatPromptWithInstruction($("imageChatPrompt").value, text);
+    input.value = "";
+    addImageChatMessage("assistant", "요청을 현재 프롬프트에 반영했습니다. 바로 생성하거나 추가 요청을 더 입력할 수 있습니다.");
+  });
+}
+if ($("imageChatGenerate")) $("imageChatGenerate").addEventListener("click", generateImageFromChat);
+if ($("imageChatApply")) $("imageChatApply").addEventListener("click", applyImageChatCandidate);
+document.addEventListener("keydown", (e) => {
+  const modal = $("imageChatModal");
+  if (!modal || modal.classList.contains("hidden")) return;
+  if (e.key === "Escape") closeImageChat();
+});
+
+// ---- 출력 탭 타임라인 빠른 편집 ----
+$("manualEditBtn").addEventListener("click", () => enterManualEditor(true));
+$("manualSaveProjectBtn").addEventListener("click", saveProject);
+$("manualExitBtn").addEventListener("click", () => {
+  exitManualEditor(true);
+  status("수동 수정 내용을 반영했습니다.", "ok");
+});
+
+$("timelineSelect").addEventListener("change", (e) => {
+  selectOutputClip(Number(e.target.value));
+});
+
+$("timelineTrack").addEventListener("click", (e) => {
+  const clip = e.target.closest(".timeline-clip");
+  if (!clip) return;
+  selectOutputClip(Number(clip.dataset.i));
+});
+
+if ($("stageTimelineTrack")) {
+  $("stageTimelineTrack").addEventListener("click", (e) => {
+    const clip = e.target.closest(".stage-timeline-clip");
+    if (!clip) return;
+    const scene = scenes[Number(clip.dataset.i)];
+    if (scene) seekToTime(scene.start);
+  });
+}
+
+$("timelinePrev").addEventListener("click", () => selectOutputClip(outputEditIndex - 1));
+$("timelineNext").addEventListener("click", () => selectOutputClip(outputEditIndex + 1));
+$("timelinePlay").addEventListener("click", () => {
+  const scene = selectedOutputScene();
+  if (!scene) return;
+  if (!audio.paused) {
+    audio.pause();
+    stopAt = null;
+    return;
+  }
+  seekToTime(scene.start);
+  stopAt = scene.end;
+  audio.play().catch((err) => status("구간 재생 실패: " + err.message, "err"));
+});
+
+$("timelineStart").addEventListener("change", (e) => updateOutputSceneTiming("start", e.target.value));
+$("timelineEnd").addEventListener("change", (e) => updateOutputSceneTiming("end", e.target.value));
+$("timelineText").addEventListener("input", (e) => {
+  const scene = selectedOutputScene();
+  if (!scene) return;
+  const next = twoLineText(e.target.value);
+  if (next !== e.target.value) e.target.value = next;
+  scene.text = next;
+  syncSectionTimes();
+  updatePreview();
+});
+$("timelineText").addEventListener("change", () => refreshAfterOutputEdit());
+$("timelinePrompt").addEventListener("input", (e) => {
+  const sec = timelineSectionForSceneIndex(outputEditIndex, true);
+  if (!sec) return;
+  sec.image_prompt = e.target.value;
+});
+$("timelinePrompt").addEventListener("change", () => refreshAfterOutputEdit(false));
+$("timelineSubtitle").addEventListener("change", (e) => {
+  const sec = timelineSectionForSceneIndex(outputEditIndex, true);
+  if (!sec) return;
+  sec.subtitle = e.target.checked;
+  refreshAfterOutputEdit(false);
+});
+$("timelineSetStart").addEventListener("click", () => {
+  const scene = selectedOutputScene();
+  if (!scene) return;
+  scene.start = currentTimelineTime();
+  refreshAfterOutputEdit();
+});
+$("timelineSetEnd").addEventListener("click", () => {
+  const scene = selectedOutputScene();
+  if (!scene) return;
+  scene.end = currentTimelineTime();
+  refreshAfterOutputEdit();
+});
+$("timelineUpload").addEventListener("click", () => $("timelineFile").click());
+$("timelineFile").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  const sec = timelineSectionForSceneIndex(outputEditIndex, true);
+  if (sec) uploadSectionImage(sec, file);
+  e.target.value = "";
+});
+$("timelineGenerate").addEventListener("click", (e) => {
+  const sec = timelineSectionForSceneIndex(outputEditIndex, true);
+  if (!sec) return status("수정할 구간을 선택하세요.", "err");
+  genCandidates(null, sec, e.currentTarget);
+});
+$("timelineChat").addEventListener("click", () => {
+  const sec = timelineSectionForSceneIndex(outputEditIndex, true);
+  if (!sec) return status("수정할 구간을 선택하세요.", "err");
+  openImageChat(sec, sectionIndexForSceneIndex(outputEditIndex));
+});
+$("timelineClearBg").addEventListener("click", () => {
+  const sec = timelineSectionForSceneIndex(outputEditIndex, false);
+  if (!sec) return;
+  sec.image_id = "";
+  sec.image_url = "";
+  sec.has_face = false;
+  sec.candidates = [];
+  refreshAfterOutputEdit(false);
+  status("선택 구간 배경을 해제했습니다. 직전 이미지가 있으면 이어서 사용됩니다.", "ok");
+});
+
+window.addEventListener("hashchange", () => {
+  if (location.hash === "#manual-editor") enterManualEditor(false);
+  else if (isManualMode()) exitManualEditor(false);
 });
 
 // ---- 프로젝트 저장 / 불러오기 (작업 내용 기억) ----
@@ -1159,14 +2743,23 @@ function collectState() {
     audio_url: audioId ? withBase(`/data/${audioId}`) : "",
     language: $("language").value,
     lyrics: $("lyrics").value,
+    step: currentStep,            // 새로고침 후 같은 단계로 복원하기 위해 현재 단계 저장
     scenes,
+    audio_lead_sec: timelineAudioOffset(),
+    title_lead_sec: titleLeadSeconds(),
+    ending_tail_sec: endingTailSeconds(),
     sections: sectionsState,
     style: $("imgStyle").value,
+    image_provider: getImageProvider(),
     gap: Number($("gapThreshold").value) || 1.6,
     aspect: getAspect(),
     font_size: Number($("fontSize").value) || 48,
     subtitle_style: $("subtitleStyle").value,
     subtitle_pos: $("subtitlePos").value,
+    subtitle_align: $("subtitleAlign").value,
+    subtitle_offset_x: subtitleOffsets().x,
+    subtitle_offset_y: subtitleOffsets().y,
+    karaoke_enabled: karaokeEnabled(),
     font: $("fontSelect").value,
     text_color: $("textColor").value,
     hi_color: $("hiColor").value,
@@ -1179,6 +2772,8 @@ function collectState() {
     outro_fade: Number($("outroFade").value) || 0,
     intro_title: $("introTitle").checked,
     intro_title_dur: Number($("introTitleDur").value) || 3,
+    outro_title: $("outroTitle").checked,
+    outro_title_dur: Number($("outroTitleDur").value) || 3,
     also_shorts: $("alsoShorts").checked,
     song_title: $("songTitle").value,
     bg_color: $("bgColor").value,
@@ -1191,6 +2786,7 @@ function collectState() {
 
 function applyState(st) {
   audioId = st.audio_id || null;
+  audioLeadSec = Number(st.audio_lead_sec) || 0;
   scenes = normalizeScenes(st.scenes || []);
   sectionsState = st.sections || [];
   bgId = st.bg_id || null;
@@ -1199,11 +2795,18 @@ function applyState(st) {
   useRef = st.use_ref !== false;
   $("lyrics").value = st.lyrics || "";
   $("language").value = st.language || "ko";
+  if ($("titleLeadSec")) $("titleLeadSec").value = st.title_lead_sec || audioLeadSec || 3;
+  if ($("endingTailSec")) $("endingTailSec").value = st.ending_tail_sec || 3;
   $("imgStyle").value = st.style || "";
+  syncImageProvider(st.image_provider || "chatgpt_proxy");
   if (st.gap) $("gapThreshold").value = st.gap;
   $("fontSize").value = st.font_size || 48;
   $("subtitleStyle").value = st.subtitle_style || "ballad";
   $("subtitlePos").value = st.subtitle_pos || "bottom";
+  $("subtitleAlign").value = st.subtitle_align || "center";
+  $("subtitleOffsetX").value = Number(st.subtitle_offset_x) || 0;
+  $("subtitleOffsetY").value = Number(st.subtitle_offset_y) || 0;
+  $("karaokeToggle").checked = !!st.karaoke_enabled;
   $("fontSelect").value = st.font || "Malgun Gothic";
   if (st.hi_color) { // 저장된 커스텀 색이 있으면 복원, 없으면 프리셋 색
     $("textColor").value = st.text_color || "#FFFFFF";
@@ -1220,23 +2823,25 @@ function applyState(st) {
   if (st.outro_fade != null) $("outroFade").value = st.outro_fade;
   $("introTitle").checked = !!st.intro_title;
   if (st.intro_title_dur) $("introTitleDur").value = st.intro_title_dur;
+  $("outroTitle").checked = !!st.outro_title;
+  if (st.outro_title_dur) $("outroTitleDur").value = st.outro_title_dur;
   $("alsoShorts").checked = !!st.also_shorts;
   $("songTitle").value = st.song_title || "";
   $("bgColor").value = st.bg_color || "#101114";
   $("fontSizeVal").textContent = $("fontSize").value;
   updateFxLabels();
   updateStylePreview();
-  const asp = document.querySelector(`input[name="aspect"][value="${st.aspect || "16:9"}"]`);
-  if (asp) asp.checked = true;
+  syncAspect(st.aspect || "16:9", false);
   if (st.audio_url) audio.src = st.audio_url;
   stopAt = null;
+  syncSectionTimes();
   renderRows();
   renderSectionCards();
   renderAnchor();
   renderChapters();
   updateStylePreview();
   updateLyricStats();
-  goStep(scenes.length ? 2 : 1);
+  goStep(st.step || (scenes.length ? 2 : 1));
   updateActionState();
   resetHistory(); // 불러온 상태를 되돌리기 시작점으로
 }
@@ -1330,7 +2935,7 @@ function buildChapters() {
   return sectionsState
     .slice()
     .sort((a, b) => a.start - b.start)
-    .map((s, i) => `${fmtClock(i === 0 ? 0 : s.start)} ${s.label || "구간 " + (i + 1)}`)
+    .map((s, i) => `${fmtClock(i === 0 ? 0 : s.start)} ${sectionTitle(s, i)}`)
     .join("\n");
 }
 
@@ -1338,7 +2943,7 @@ function renderChapters() {
   const box = $("ytExport");
   if (!box) return;
   const ga = $("genAllBtn");
-  if (ga) ga.classList.toggle("hidden", !sectionsState.length);
+  if (ga) ga.classList.toggle("hidden", !scenes.length);
   const ap = $("autoPromptBtn");
   if (ap) ap.classList.toggle("hidden", !sectionsState.length);
   const bs = $("beatSnapBtn");
@@ -1364,7 +2969,7 @@ function flashCopied(btn) {
 
 $("copyChaptersBtn").addEventListener("click", async (e) => {
   const txt = $("chaptersBox").value;
-  if (!txt) return status("먼저 구간을 나누세요.", "err");
+  if (!txt) return status("먼저 가사별 나누기를 실행하세요.", "err");
   try {
     await navigator.clipboard.writeText(txt);
   } catch (err) {
@@ -1379,6 +2984,7 @@ $("copyChaptersBtn").addEventListener("click", async (e) => {
 $("thumbBtn").addEventListener("click", async () => {
   const title = $("songTitle").value.trim();
   if (!title) return status("영상 제목을 입력하세요.", "err");
+  saveAutosaveNow();
   // 썸네일 배경은 이미지 구간에서만(영상 파일은 Image.open 불가)
   const bg = (sectionsState.find((s) => s.image_id && !isVideoUrl(s.image_url)) || {}).image_id || "";
   busy("썸네일 생성 중…");
@@ -1456,10 +3062,79 @@ function updateStylePreview() {
   el.style.fontFamily = $("fontSelect").value;  // 폰트 미리보기에도 반영
   const o = c.outline;
   const sh = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
+  if (!karaokeHighlightActive()) {
+    el.innerHTML = `<span style="color:${c.base};text-shadow:${sh}">가사 미리보기</span>`;
+    return;
+  }
   el.innerHTML =
     `<span style="color:${c.hi};text-shadow:${sh}">부르는 단어</span> ` +
     `<span style="color:${c.base};text-shadow:${sh}">가사 미리보기</span>`;
 }
+
+const registeredFonts = new Set();
+
+function ensureFontStyleEl() {
+  let el = $("uploadedFontFaces");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "uploadedFontFaces";
+    document.head.appendChild(el);
+  }
+  return el;
+}
+
+function addUploadedFontOption(font) {
+  if (!font || !font.family) return;
+  const select = $("fontSelect");
+  const fontId = font.font_id || font.family;
+  if (font.font_url && !registeredFonts.has(fontId)) {
+    ensureFontStyleEl().appendChild(document.createTextNode(
+      `@font-face{font-family:${JSON.stringify(font.family)};src:url(${JSON.stringify(font.font_url)});font-display:swap;}\n`
+    ));
+    registeredFonts.add(fontId);
+  }
+  const exists = [...select.options].some((opt) =>
+    opt.dataset.fontId === fontId || (opt.value === font.family && !font.font_id)
+  );
+  if (exists) return;
+  const opt = document.createElement("option");
+  opt.value = font.family;
+  opt.textContent = font.label || `${font.family} (업로드)`;
+  opt.dataset.fontId = fontId;
+  select.appendChild(opt);
+}
+
+async function loadUploadedFonts() {
+  try {
+    const res = await fetch("/api/fonts");
+    if (!res.ok) throw new Error(res.statusText);
+    const data = await res.json();
+    (data.fonts || []).forEach(addUploadedFontOption);
+  } catch (e) {
+    status("업로드 폰트 목록을 불러오지 못했습니다: " + e.message, "err");
+  }
+}
+
+async function uploadSubtitleFont(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  busy("자막 폰트를 업로드 중입니다.");
+  try {
+    const res = await fetch("/api/upload-font", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    addUploadedFontOption(data);
+    $("fontSelect").value = data.family;
+    updateStylePreview();
+    updatePreview();
+    scheduleAutosave();
+    status(`자막 폰트 추가 완료: ${data.label || data.family}`, "ok");
+  } catch (e) {
+    status("자막 폰트 추가 실패: " + e.message, "err");
+  }
+}
+
 // 프리셋을 바꾸면 색 피커를 그 프리셋 색으로 채운다(거기서 취향대로 미세조정).
 $("subtitleStyle").addEventListener("change", () => {
   presetColorsToPickers();
@@ -1471,6 +3146,10 @@ $("subtitleStyle").addEventListener("change", () => {
 );
 $("resetColors").addEventListener("click", () => {
   presetColorsToPickers();
+  updateStylePreview();
+  updatePreview();
+});
+$("karaokeToggle").addEventListener("change", () => {
   updateStylePreview();
   updatePreview();
 });
@@ -1494,8 +3173,29 @@ function scheduleAutosave() {
     if (ind) ind.classList.remove("saving");
   }, 1500);
 }
+
+function saveAutosaveNow() {
+  const ind = $("saveState");
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+  try {
+    const st = collectState();
+    if ((st.scenes || []).length || (st.lyrics || "").trim()) {
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ at: Date.now(), state: st }));
+    }
+  } catch (e) {
+    /* 용량 초과 등 무시 */
+  }
+  if (ind) ind.classList.remove("saving");
+}
+
 document.addEventListener("input", scheduleAutosave, true);
 document.addEventListener("change", scheduleAutosave, true);
+document.addEventListener("click", (e) => {
+  if (e.target.closest("a[download]")) saveAutosaveNow();
+}, true);
 
 // ---- 되돌리기 / 다시하기 (가사 타이밍·구간 편집 스냅샷) ----
 let undoStack = [];
@@ -1539,6 +3239,7 @@ function restoreHistory(str) {
     const o = JSON.parse(str);
     scenes = normalizeScenes(o.scenes || []);
     sectionsState = o.sections || [];
+    syncSectionTimes();
     renderRows();
     renderSectionCards();
     renderAnchor();
@@ -1584,29 +3285,41 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-function offerRestore() {
+// 새로고침/재방문 시: 자동저장된 세션이 있으면 그 단계까지 자동으로 복원한다.
+// (이전엔 "복구할까요?" 배너만 띄우고 항상 1단계로 리셋 → F5하면 처음 화면으로
+//  돌아가는 원인이었다. 이제 이어서 복원하고, 원하면 "새로 시작"을 누른다.)
+function restoreSession() {
   let saved = null;
   try {
     saved = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null");
   } catch (e) {
     saved = null;
   }
-  if (!saved || !saved.state || !(saved.state.scenes || []).length) return;
+  const st = saved && saved.state;
+  if (!st || (!(st.scenes || []).length && !(st.lyrics || "").trim())) return false;
+  applyState(st); // 저장된 단계(st.step)까지 그대로 복원
   const bar = $("restoreBar");
-  $("restoreInfo").textContent = `이전 작업(${new Date(saved.at).toLocaleString()})이 있습니다. 복구할까요?`;
-  bar.classList.remove("hidden");
-  $("restoreBtn").onclick = () => {
-    applyState(saved.state);
-    bar.classList.add("hidden");
-    status("이전 작업을 복구했습니다.", "ok");
-  };
-  $("restoreDismiss").onclick = () => bar.classList.add("hidden");
+  if (bar) {
+    $("restoreInfo").textContent =
+      `이전 작업(${new Date(saved.at).toLocaleString()})을 이어서 불러왔습니다.`;
+    const fresh = $("restoreBtn");
+    fresh.textContent = "새로 시작";
+    fresh.onclick = () => {
+      try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) { /* 무시 */ }
+      location.reload();
+    };
+    $("restoreDismiss").textContent = "닫기";
+    $("restoreDismiss").onclick = () => bar.classList.add("hidden");
+    bar.classList.remove("hidden");
+  }
+  return true;
 }
 
-// ---- 실시간 미리보기 (배경 + 노래방 자막) ----
+// ---- 실시간 미리보기 (배경 + 자막) ----
 function setPreviewAspect() {
   const a = getAspect();
   $("preview").style.aspectRatio = a === "9:16" ? "9 / 16" : a === "1:1" ? "1 / 1" : "16 / 9";
+  if ($("manualAspect")) $("manualAspect").value = a;
 }
 function applyPreviewStyle() {
   const ov = $("previewSub");
@@ -1617,24 +3330,38 @@ function applyPreviewStyle() {
   const o = currentStyleColors().outline;
   ov.style.textShadow = `-2px 0 ${o},2px 0 ${o},0 -2px ${o},0 2px ${o},-2px -2px ${o},2px 2px ${o},-2px 2px ${o},2px -2px ${o}`;
   const pos = $("subtitlePos").value;
+  const [aw, ah] = ASPECT_SIZE[getAspect()] || ASPECT_SIZE["16:9"];
+  const offsets = subtitleOffsets();
+  const x = Math.round(offsets.x * (($("preview").clientWidth || 640) / aw));
+  const y = Math.round(offsets.y * (($("preview").clientHeight || 360) / ah));
   if (pos === "middle") {
-    ov.style.top = "50%"; ov.style.bottom = "auto"; ov.style.transform = "translateY(-50%)";
+    ov.style.top = "50%"; ov.style.bottom = "auto";
+    ov.style.transform = `translateX(${x}px) translateY(-50%) translateY(${y}px)`;
   } else if (pos === "top") {
-    ov.style.top = "7%"; ov.style.bottom = "auto"; ov.style.transform = "none";
+    ov.style.top = "7%"; ov.style.bottom = "auto";
+    ov.style.transform = `translate(${x}px, ${y}px)`;
   } else {
-    ov.style.top = "auto"; ov.style.bottom = "7%"; ov.style.transform = "none";
+    ov.style.top = "auto"; ov.style.bottom = "7%";
+    ov.style.transform = `translate(${x}px, ${y}px)`;
   }
+  ov.style.textAlign = $("subtitleAlign").value === "left" ? "left" : "center";
 }
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
   );
 }
+function subtitleHtml(s) {
+  return escapeHtml(s).replace(/\n/g, "<br>");
+}
 function karaokeHTML(sc, t) {
   const c = currentStyleColors();
+  if ((sc.text || "").includes("\n")) {
+    return `<span style="color:${c.base}">${subtitleHtml(sc.text)}</span>`;
+  }
   const words = sc.words && sc.words.length ? sc.words : null;
-  if (!words || $("subtitleStyle").value === "simple") {
-    return `<span style="color:${c.base}">${escapeHtml(sc.text)}</span>`;
+  if (!words || !karaokeHighlightActive()) {
+    return `<span style="color:${c.base}">${subtitleHtml(sc.text)}</span>`;
   }
   // 최종 ASS \kf와 동일하게: 부르는 단어를 '왼→오'로 점점 채운다(단어 길이=다음 단어 시작까지).
   return words
@@ -1666,7 +3393,7 @@ function applyPreviewFx(bg, sec) {
     bg.style.transform = "";
   }
   // 구간 전환 크로스페이드 근사 — 구간이 바뀔 때 배경을 페이드 인
-  const key = sec ? sec.label + "@" + sec.start : null;
+  const key = sec ? sectionTitle(sec) + "@" + sec.start : null;
   if (key !== _lastPreviewSec) {
     _lastPreviewSec = key;
     if ($("transition").value !== "none") {
@@ -1681,9 +3408,14 @@ function applyPreviewTitle(t) {
   const el = $("previewTitle");
   if (!el) return false;
   const title = $("songTitle").value.trim();
-  const dur = Number($("introTitleDur").value) || 3;
-  // 인트로 타이틀: 켜져 있고 제목이 있고 타이틀 길이 안일 때 표시(최종 ASS와 동일 구간)
-  const on = $("introTitle").checked && title && t < dur;
+  const introDur = Number($("introTitleDur").value) || 3;
+  const audioDur = Number(audio.duration);
+  const outroDur = Number($("outroTitleDur").value) || 3;
+  const introOn = $("introTitle").checked && title && t < introDur;
+  const outroOn = $("outroTitle").checked && title && Number.isFinite(audioDur)
+    && audioDur > 0 && t >= Math.max(0, audioDur - outroDur);
+  // 타이틀 카드가 보이는 동안은 일반 자막을 숨긴다(최종 ASS와 동일 구간).
+  const on = introOn || outroOn;
   if (on) {
     el.textContent = title;
     el.style.fontFamily = $("fontSelect").value;
@@ -1699,7 +3431,7 @@ function applyPreviewTitle(t) {
 function syncPreviewVideo(vid, sec) {
   // 영상 미리보기를 오디오 재생 위치/상태에 맞춘다(구간 시작 기준, 길이 반복).
   if (vid.readyState >= 1 && vid.duration && isFinite(vid.duration)) {
-    const into = (audio.currentTime || 0) - sec.start;
+    const into = currentTimelineTime() - sec.start;
     const target = ((into % vid.duration) + vid.duration) % vid.duration;
     if (Math.abs((vid.currentTime || 0) - target) > 0.4) {
       try { vid.currentTime = target; } catch (e) { /* seek 무시 */ }
@@ -1717,31 +3449,33 @@ function updatePreview() {
   if (!prev || currentStep < 2) return;
   const bg = $("previewBg");
   const vid = $("previewVideo");
-  const t = audio.currentTime || 0;
-  let sec = sectionsState.find((s) => t >= s.start && t < s.end);
-  if (!sec && sectionsState.length) {
-    sec = t < sectionsState[0].start ? sectionsState[0] : sectionsState[sectionsState.length - 1];
+  const t = currentTimelineTime();
+  let secIndex = sectionsState.findIndex((s) => t >= s.start && t < s.end);
+  if (secIndex < 0 && sectionsState.length) {
+    secIndex = t < sectionsState[0].start ? 0 : sectionsState.length - 1;
   }
-  const isVid = !!(sec && sec.image_url && isVideoUrl(sec.image_url));
+  const sec = secIndex >= 0 ? sectionsState[secIndex] : null;
+  const mediaSec = secIndex >= 0 ? inheritedMediaForIndex(secIndex).section : null;
+  const isVid = !!(mediaSec && mediaSec.image_url && isVideoUrl(mediaSec.image_url));
   if (isVid && vid) {
-    if (vid.dataset.src !== sec.image_url) {
-      vid.dataset.src = sec.image_url;
-      vid.src = sec.image_url;
+    if (vid.dataset.src !== mediaSec.image_url) {
+      vid.dataset.src = mediaSec.image_url;
+      vid.src = mediaSec.image_url;
     }
     vid.classList.add("show");
     if (bg) { bg.style.backgroundImage = ""; bg.classList.remove("kb-on"); bg.style.opacity = "1"; }
-    syncPreviewVideo(vid, sec);
+    syncPreviewVideo(vid, mediaSec);
   } else {
     if (vid) { vid.classList.remove("show"); if (!vid.paused) vid.pause(); }
     if (bg) {
-      if (sec && sec.image_url) {
-        bg.style.backgroundImage = `url('${sec.image_url}')`;
+      if (mediaSec && mediaSec.image_url) {
+        bg.style.backgroundImage = `url('${mediaSec.image_url}')`;
         bg.style.backgroundColor = "";
       } else {
         bg.style.backgroundImage = "";
         bg.style.backgroundColor = $("bgColor").value || "#10131c";
       }
-      applyPreviewFx(bg, sec);
+      applyPreviewFx(bg, mediaSec || sec);
     }
   }
   const sc = scenes.find((s) => t >= s.start && t < s.end);
@@ -1754,14 +3488,15 @@ function updatePreview() {
   if (meta) {
     const mm = Math.floor(t / 60);
     const ss = Math.floor(t % 60);
-    meta.textContent = `미리보기 · ${mm}:${String(ss).padStart(2, "0")}` + (sec ? ` · ${sec.label}` : "");
+    meta.textContent = `미리보기 · ${mm}:${String(ss).padStart(2, "0")}` + (sec ? ` · ${sectionTitle(sec)}` : "");
   }
 }
 
 // ---- 구간 이미지 직접 업로드 ----
 async function uploadSectionImage(s, file) {
   if (!file) return;
-  busy(`${s.label} 이미지 업로드 중…`);
+  const title = sectionTitle(s);
+  busy(`${title} 이미지 업로드 중…`);
   const fd = new FormData();
   fd.append("file", file);
   try {
@@ -1775,7 +3510,7 @@ async function uploadSectionImage(s, file) {
     renderSectionCards();
     renderAnchor();
     updatePreview();
-    status(`${s.label} 배경을 올린 이미지로 바꿨습니다.`, "ok");
+    status(`${title} 배경을 올린 이미지로 바꿨습니다.`, "ok");
   } catch (e) {
     status("업로드 실패: " + e.message, "err");
   }
@@ -1799,6 +3534,21 @@ $("stepTabs").addEventListener("keydown", (e) => {
     if (target) target.focus();
   }
 });
+document.querySelectorAll(".rail-item[data-rail-step]").forEach((button) => {
+  button.addEventListener("click", () => goStep(Number(button.dataset.railStep)));
+});
+if ($("railPreviewBtn")) {
+  $("railPreviewBtn").addEventListener("click", () => {
+    if (!scenes.length) return status("먼저 자동 정렬로 가사 싱크를 만들어주세요.", "err");
+    goStep(4);
+  });
+}
+if ($("railTimelineBtn")) {
+  $("railTimelineBtn").addEventListener("click", () => {
+    if (!scenes.length) return status("타임라인 편집은 싱크가 만들어진 뒤 사용할 수 있습니다.", "err");
+    $("manualEditBtn").click();
+  });
+}
 $("prevStep").addEventListener("click", () => goStep(currentStep - 1));
 $("nextStep").addEventListener("click", () => {
   if (currentStep === 1 && !scenes.length) {
@@ -1808,9 +3558,10 @@ $("nextStep").addEventListener("click", () => {
 });
 
 // 미리보기 즉시 반영 — 폰트·전환·줌·인트로 타이틀·제목까지 포함(input/change 둘 다 안전망)
-["fontSize", "bgColor", "subtitleStyle", "subtitlePos", "fontSelect",
+["fontSize", "bgColor", "subtitleStyle", "subtitlePos", "subtitleAlign",
+ "subtitleOffsetX", "subtitleOffsetY", "karaokeToggle", "fontSelect",
  "transition", "transitionDur", "kenBurns", "songTitle", "introTitle",
- "introTitleDur", "introFade", "outroFade"].forEach((id) => {
+ "introTitleDur", "outroTitle", "outroTitleDur", "introFade", "outroFade"].forEach((id) => {
   const el = $(id);
   if (!el) return;
   el.addEventListener("input", updatePreview);
@@ -1818,6 +3569,12 @@ $("nextStep").addEventListener("click", () => {
 });
 // 폰트는 자막 스타일 미리보기(스와치)에도 반영
 $("fontSelect").addEventListener("change", updateStylePreview);
+$("fontUploadBtn").addEventListener("click", () => $("fontFile").click());
+$("fontFile").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  uploadSubtitleFont(file);
+  e.target.value = "";
+});
 $("fontSize").addEventListener("input", () => {
   $("fontSizeVal").textContent = $("fontSize").value;
   $("fontSize").setAttribute("aria-valuetext", $("fontSize").value + "px");
@@ -1848,18 +3605,41 @@ updateFxLabels();
 
 document.querySelectorAll('input[name="aspect"]').forEach((r) =>
   r.addEventListener("change", () => {
-    setPreviewAspect();
-    updatePreview();
+    syncAspect(r.value);
   })
 );
-window.addEventListener("resize", applyPreviewStyle);
+$("manualAspect").addEventListener("change", (e) => syncAspect(e.target.value));
+function onImageProviderChange(e) {
+  syncImageProvider(e.target.value);
+  scheduleAutosave();
+  status(`${imageProviderLabel()}를 사용합니다.`, "ok");
+}
+if ($("imageProvider")) $("imageProvider").addEventListener("change", onImageProviderChange);
+if ($("manualImageProvider")) $("manualImageProvider").addEventListener("change", onImageProviderChange);
+window.addEventListener("resize", () => {
+  updateStudioChromeHeight();
+  applyPreviewStyle();
+});
 
-updateLyricStats();
-updateActionState();
-renderSectionCards();
-renderAnchor();
-renderChapters();
-updateStylePreview();
-refreshProjects();
-offerRestore();
-goStep(1);
+async function init() {
+  updateStudioChromeHeight();
+  setupTheme();
+  await loadUploadedFonts();
+  setupGuides();
+  setupTutorial();
+  updateLyricStats();
+  updateActionState();
+  renderSectionCards();
+  renderAnchor();
+  renderChapters();
+  updateStylePreview();
+  refreshProjects();
+  const restored = restoreSession();
+  if (!restored) {
+    goStep(1);
+    showTutorial(false);
+  }
+  if (location.hash === "#manual-editor" && scenes.length) enterManualEditor(false);
+}
+
+init();

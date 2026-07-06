@@ -30,7 +30,24 @@ class MarvImageProvider(ImageProvider):
     def _headers(self):
         return {"x-api-key": self.key} if self.key else {}
 
+    def _check_health(self):
+        """마브 생성 백엔드 상태를 확인해 placeholder 대신 명확한 오류를 보여준다."""
+        try:
+            r = requests.get(f"{self.base}/v1/health", params={"deep": "true"},
+                             headers=self._headers(), timeout=15)
+            r.raise_for_status()
+            data = r.json()
+        except requests.RequestException:
+            # 헬스체크 자체가 일시 실패해도 실제 생성 호출에서 더 정확한 오류가 날 수 있다.
+            return
+        checks = data.get("checks") or {}
+        comfy = checks.get("comfyui") or {}
+        if comfy and not comfy.get("ok"):
+            detail = comfy.get("detail") or "ComfyUI unavailable"
+            raise RuntimeError(f"마브 이미지 생성 백엔드(ComfyUI)가 꺼져 있습니다: {detail}")
+
     def generate(self, prompt: str, out_path: str, aspect: str = "16:9", **kw) -> str:
+        self._check_health()
         # 키는 선택적: 마브 서버 인증이 비활성이면 없이도 동작. 있으면 x-api-key로 전송.
         seed = int(kw.get("seed") or 42)
         params = {"aspect": aspect, "seed": seed}
@@ -80,7 +97,10 @@ class MarvImageProvider(ImageProvider):
             if status == "finished":
                 break
             if status == "failed":
-                raise RuntimeError(jr.json().get("error") or "마브 잡 실패")
+                err = jr.json().get("error") or "마브 잡 실패"
+                if "ConnectError" in err and "Connection refused" in err:
+                    err = f"마브 이미지 생성 백엔드(ComfyUI)가 꺼져 있습니다: {err}"
+                raise RuntimeError(err)
             time.sleep(2)
         else:
             raise RuntimeError("마브 생성 시간 초과")

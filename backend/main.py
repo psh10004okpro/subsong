@@ -13,8 +13,10 @@ import time
 import uuid
 from datetime import datetime
 
+from PIL import ImageFont
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
+    FileResponse,
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
@@ -36,8 +38,11 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.environ.get("SUBSONG_DATA_DIR") or os.path.join(BASE, "data")
 FRONT = os.path.join(BASE, "frontend")
 PROJECTS = os.path.join(DATA, "projects")
+FONTS = os.path.join(DATA, "fonts")
+FONTS_META = os.path.join(FONTS, "fonts.json")
 os.makedirs(DATA, exist_ok=True)
 os.makedirs(PROJECTS, exist_ok=True)
+os.makedirs(FONTS, exist_ok=True)
 
 # 서브패스 배포(예: 리버스 프록시 뒤 /subsong). 빈 값이면 루트(/)에서 서빙.
 # Cloudflare 터널 등 "접두사를 떼지 않는" 프록시를 위해, 설정 시 앱 전체를 이 경로
@@ -98,7 +103,7 @@ class ImagesReq(BaseModel):
     scenes: list[Scene]
     style: str = ""
     aspect: str = "16:9"
-    gap: float = 1.6  # 라벨 없을 때 이 초 이상 비면 새 구간(자동 그룹핑)
+    gap: float = 1.6  # 예전 저장 상태/API 호환용. 현재는 가사 1줄당 슬롯 1개.
 
 
 class CandidatesReq(BaseModel):
@@ -107,6 +112,7 @@ class CandidatesReq(BaseModel):
     count: int = 4
     label: str = ""
     ref_image_id: str = ""
+    provider: str = ""
 
 
 class AutoPromptReq(BaseModel):
@@ -141,6 +147,10 @@ class RenderReq(BaseModel):
     font_size: int = 48
     subtitle_style: str = "ballad"
     subtitle_pos: str = "bottom"
+    subtitle_align: str = "center"
+    subtitle_offset_x: float = 0.0
+    subtitle_offset_y: float = 0.0
+    karaoke_enabled: bool = False   # 노래방처럼 단어 색상이 따라가는 효과. 기본 꺼짐.
     transition: str = "none"        # "none"(하드컷) | "crossfade"
     transition_dur: float = 0.8     # 크로스페이드 길이(초)
     ken_burns: float = 0.0          # 배경 줌 모션 강도 (0=정지)
@@ -148,10 +158,14 @@ class RenderReq(BaseModel):
     outro_fade: float = 0.0         # 아웃트로 페이드아웃(초, 0=없음)
     intro_title: str = ""           # 인트로 타이틀 카드 문구(빈 값=없음)
     intro_title_dur: float = 3.0    # 타이틀 카드 표시 길이(초)
+    outro_title: str = ""           # 마지막 타이틀 카드 문구(빈 값=없음)
+    outro_title_dur: float = 3.0    # 마지막 타이틀 카드 표시 길이(초)
+    audio_delay_sec: float = 0.0    # 영상 시작 후 실제 음원이 시작되는 시간(앞 무음)
     text_color: str = ""            # 자막 기본 글자색(빈 값=프리셋)
     hi_color: str = ""              # 강조(부르는 단어) 색
     outline_color: str = ""         # 외곽선 색
     sections: list[SectionBg] = []
+    preview: bool = False           # 최종 내보내기 전 확인용 저해상도 렌더
 
 
 class ProjectReq(BaseModel):
@@ -167,8 +181,81 @@ def _save_upload(file: UploadFile, default_ext: str) -> str:
     return name
 
 
+def _load_fonts_meta():
+    try:
+        with open(FONTS_META, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def _save_fonts_meta(fonts):
+    with open(FONTS_META, "w", encoding="utf-8") as f:
+        json.dump(fonts, f, ensure_ascii=False, indent=2)
+
+
+def _font_family(path, fallback):
+    try:
+        font = ImageFont.truetype(path, 16)
+        family, style = font.getname()
+        return (family or fallback).strip(), (style or "").strip()
+    except Exception:
+        return fallback, ""
+
+
+def _font_label(family, style):
+    if style and style.lower() not in {"regular", "normal"}:
+        return f"{family} {style} (업로드)"
+    return f"{family} (업로드)"
+
+
+@app.get("/api/fonts")
+def api_fonts():
+    fonts = []
+    changed = False
+    for item in _load_fonts_meta():
+        font_id = item.get("font_id") or ""
+        if not font_id or not os.path.exists(os.path.join(DATA, font_id)):
+            changed = True
+            continue
+        item["font_url"] = _data_url(font_id)
+        fonts.append(item)
+    if changed:
+        _save_fonts_meta([{k: v for k, v in item.items() if k != "font_url"} for item in fonts])
+    return {"fonts": fonts}
+
+
+@app.post("/api/upload-font")
+def api_upload_font(file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in {".ttf", ".otf", ".ttc"}:
+        raise HTTPException(400, "TTF, OTF, TTC 폰트 파일만 업로드할 수 있습니다.")
+    font_id = f"fonts/{uuid.uuid4().hex}{ext}"
+    path = os.path.join(DATA, font_id)
+    with open(path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    stem = os.path.splitext(os.path.basename(file.filename or "uploaded-font"))[0]
+    family, style = _font_family(path, stem)
+    item = {
+        "font_id": font_id,
+        "font_url": _data_url(font_id),
+        "family": family,
+        "style": style,
+        "label": _font_label(family, style),
+        "filename": file.filename or os.path.basename(font_id),
+        "uploaded_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    fonts = _load_fonts_meta()
+    fonts = [f for f in fonts if f.get("font_id") != font_id]
+    fonts.append({k: v for k, v in item.items() if k != "font_url"})
+    _save_fonts_meta(fonts)
+    return item
+
+
 @app.post("/api/align")
-async def api_align(
+def api_align(
     audio: UploadFile = File(...),
     lyrics: str = Form(...),
     language: str = Form("ko"),
@@ -183,14 +270,14 @@ async def api_align(
 
 
 @app.post("/api/upload-bg")
-async def api_upload_bg(file: UploadFile = File(...)):
+def api_upload_bg(file: UploadFile = File(...)):
     bg_id = _save_upload(file, ".jpg")
     return {"bg_id": bg_id, "bg_url": _data_url(bg_id)}
 
 
 @app.post("/api/images")
 def api_images(req: ImagesReq):
-    """장면 → 구간 묶기 (이미지는 아직 생성하지 않음)."""
+    """장면 → 가사별 배경 슬롯 만들기 (이미지는 아직 생성하지 않음)."""
     secs = images_mod.group_only([s.model_dump() for s in req.scenes], req.style, gap=req.gap)
     for s in secs:
         s.pop("image_path", None)
@@ -232,14 +319,15 @@ def api_beats(req: BeatsReq):
 
 @app.post("/api/candidates")
 def api_candidates(req: CandidatesReq):
-    """한 구간 프롬프트로 후보 이미지 N장 생성 (사용자가 1장 선택)."""
+    """한 가사 프롬프트로 선택한 프록시 이미지 생성."""
     try:
         cands = images_mod.generate_candidates(
             req.prompt, DATA, count=req.count, aspect=req.aspect, label=req.label,
             ref_image_id=req.ref_image_id or None,
+            provider=req.provider or None,
         )
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(500, f"이미지 생성 실패: {e}")
+        raise HTTPException(500, str(e))
     for c in cands:
         c["image_url"] = _data_url(c['image_id'])
         c.pop("path", None)
@@ -276,8 +364,8 @@ def api_render(req: RenderReq):
         for sb in req.sections if sb.image_id
     ] or None
     scenes_render = [s.model_dump() for s in req.scenes]
-    aspects = list(dict.fromkeys(req.aspects or [req.aspect]))  # 중복 제거(순서 보존)
-    job = jobs_mod.create("render")
+    aspects = [req.aspect] if req.preview else list(dict.fromkeys(req.aspects or [req.aspect]))
+    job = jobs_mod.create("preview" if req.preview else "render")
 
     def run():
         try:
@@ -292,17 +380,28 @@ def api_render(req: RenderReq):
                     aspect=asp, bg_color=req.bg_color,
                     font=req.font, font_size=req.font_size,
                     subtitle_style=req.subtitle_style, subtitle_pos=req.subtitle_pos,
+                    subtitle_align=req.subtitle_align,
+                    subtitle_offset_x=req.subtitle_offset_x,
+                    subtitle_offset_y=req.subtitle_offset_y,
+                    karaoke_enabled=req.karaoke_enabled,
                     transition=req.transition, transition_dur=req.transition_dur,
                     ken_burns=req.ken_burns,
                     intro_fade=req.intro_fade, outro_fade=req.outro_fade,
                     intro_title=req.intro_title, intro_title_dur=req.intro_title_dur,
+                    outro_title=req.outro_title, outro_title_dur=req.outro_title_dur,
+                    audio_delay_sec=req.audio_delay_sec,
                     text_color=req.text_color, hi_color=req.hi_color,
                     outline_color=req.outline_color,
+                    preview=req.preview,
                     job=job, progress_range=(i / n, (i + 1) / n),
                 )
                 if job.cancelled or out is None:
                     break
-                videos.append({"aspect": asp, "video_url": _data_url(os.path.basename(out))})
+                videos.append({
+                    "aspect": asp,
+                    "video_url": _data_url(os.path.basename(out)),
+                    "preview": req.preview,
+                })
             if job.cancelled:
                 job.status, job.message = "cancelled", "취소됨"
             else:
@@ -438,6 +537,15 @@ class NoCacheStatic(StaticFiles):
         return resp
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(
+        os.path.join(FRONT, "favicon.ico"),
+        media_type="image/x-icon",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 app.mount("/data", StaticFiles(directory=DATA), name="data")
 app.mount("/", NoCacheStatic(directory=FRONT, html=True), name="front")
 
@@ -452,6 +560,14 @@ if BASE_PATH:
     def _base_redirect():
         # /subsong → /subsong/ (상대경로 자산이 올바로 풀리도록 슬래시 보정)
         return RedirectResponse(url=BASE_PATH + "/", status_code=307)
+
+    @_root.get("/favicon.ico", include_in_schema=False)
+    def _root_favicon():
+        return FileResponse(
+            os.path.join(FRONT, "favicon.ico"),
+            media_type="image/x-icon",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     _root.mount(BASE_PATH, app)
     app = _root

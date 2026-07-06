@@ -8,6 +8,18 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+$envFile = Join-Path $PSScriptRoot ".env.local"
+if (Test-Path $envFile) {
+  Get-Content $envFile | ForEach-Object {
+    if ($_ -match "^\s*#" -or $_ -notmatch "=") { return }
+    $parts = $_ -split "=", 2
+    [Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim().Trim("'`""), "Process")
+  }
+}
+if (-not $env:SUBSONG_IMAGE_PROVIDER) {
+  $env:SUBSONG_IMAGE_PROVIDER = "chatgpt_proxy"
+}
+
 # 패키지가 설치된 파이썬을 우선 사용 (miniconda 등 다른 파이썬으로 잡히는 문제 방지)
 if (-not $Py) {
   $cand = Join-Path $env:LOCALAPPDATA "Programs\Python\Python310\python.exe"

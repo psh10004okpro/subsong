@@ -53,33 +53,38 @@ data/                업로드·출력 파일 (git 제외)
   "image_prompt": "", "image_path": "", "video_path": "" }
 ```
 
-## 2차 — 구간별 배경 이미지 (현재: 플레이스홀더)
-파이프라인은 완성돼 있고, 지금은 **플레이스홀더 생성기**가 구간마다 색·라벨만
-다른 이미지를 만든다. 흐름:
+## 2차 — 가사별 배경 이미지
+파이프라인은 완성돼 있고, Step 3에서 `GPT-Image-2` 또는 `나노바나나`를 선택해
+가사마다 실제 이미지를 생성한다. 흐름:
 
 ```
-장면 → 구간 묶기(sections.py) → 구간별 이미지(images.py + providers)
-     → 구간마다 배경이 바뀌는 영상(render.py)
+장면 → 가사별 배경 슬롯(sections.py) → 이미지(images.py + providers)
+     → 가사마다 배경이 바뀌는 영상(render.py)
 ```
 
-- 구간 묶기: 가사의 `[Verse]`·`[Chorus]` 라벨이 있으면 그걸로, 없으면 시간 간격으로.
-- UI: 출력 패널 "배경 이미지 · 구간별" → 스타일 입력 → `구간 나누기`
-  → 구간별 `4장 생성` → 후보 썸네일 중 1장 클릭 선택 → `MP4 만들기`.
+- 가사별 나누기: Step 2 가사 줄과 Step 3 배경 슬롯을 1:1로 맞춘다.
+- UI: Step 3 "배경 이미지" → 생성기 선택(`GPT-Image-2`/`나노바나나`) → `GPT 생성` 또는 `나노바나나 생성`.
 - 구간별 **자막 on/off** 체크박스(반복 후렴 등 자막 제외 가능).
 - **일관성 참조(anchor)**: 선택한 이미지를 참조로 잡아 이후 생성에 i2i로 전달.
   얼굴 감지(`backend/face.py`, OpenCV)로 **인물 참조**(얼굴 O → 같은 인물 유지) /
   **컨셉 참조**(얼굴 X → 분위기 유지)를 자동 분류. "참조 바"에서 적용/해제.
-  프롬프트를 고친 뒤 `4장 생성`을 누르면 재생성된다.
+  프롬프트를 고친 뒤 다시 생성하면 재생성된다.
 - 관련 파일: `backend/sections.py`, `backend/images.py`, `backend/face.py`,
-  `backend/providers/placeholder_provider.py`, API `/api/images`(구간묶기)·`/api/candidates`(후보 N장, `ref_image_id`).
+  `backend/providers/proxy_provider.py`, API `/api/images`(가사별 슬롯)·`/api/candidates`(생성, `ref_image_id`).
 
-### 마브 외부 API로 실제 이미지 생성
-`backend/providers/marv_provider.py` 가 마브 `/v1/image`(Z-Image-Turbo)로 생성. 활성화:
+### 이미지 프록시로 실제 이미지 생성
+Step 3에서 `GPT-Image-2` 또는 `나노바나나`를 선택해 생성한다.
+키와 엔드포인트는 `.env.local` 또는 환경변수로 설정한다.
 ```powershell
-$env:SUBSONG_MARV_API_KEY = "<INTERNAL_TOOL_API_KEY>"
-$env:SUBSONG_IMAGE_PROVIDER = "marv"   # 키 없으면 placeholder가 기본
+$env:SUBSONG_CHATGPT_PROXY_KEY = "<CHATGPT_PROXY_KEY>"
+$env:SUBSONG_NANOBANANA_PROXY_KEY = "<NANOBANANA_PROXY_KEY>"
+$env:SUBSONG_IMAGE_PROVIDER = "chatgpt_proxy"
 ./run.ps1
 ```
+
+기본 엔드포인트는 코드에 들어 있으며 필요할 때만 바꾼다:
+- `SUBSONG_CHATGPT_PROXY_BASE`
+- `SUBSONG_NANOBANANA_PROXY_BASE`
 
 ## 프로젝트 저장 / 불러오기
 정렬·편집·구간 선택을 다시 안 하도록 작업 상태를 저장한다.

@@ -7,14 +7,15 @@
 import os
 
 from .base import ImageProvider, VideoProvider
-from .marv_provider import MarvImageProvider
 from .none_provider import NoneImageProvider, NoneVideoProvider
 from .placeholder_provider import PlaceholderImageProvider
+from .proxy_provider import NanoBananaProxyProvider, OpenAIImageProxyProvider
 
 IMAGE_PROVIDERS = {
     "none": NoneImageProvider,
     "placeholder": PlaceholderImageProvider,
-    "marv": MarvImageProvider,       # 마브 외부 API (Z-Image-Turbo 등)
+    "chatgpt_proxy": OpenAIImageProxyProvider,
+    "nanobanana_proxy": NanoBananaProxyProvider,
     # "sdxl": SdxlImageProvider,     # ← 로컬 SDXL (선택)
 }
 
@@ -23,14 +24,15 @@ VIDEO_PROVIDERS = {
     # "myapi": MyApiVideoProvider,   # ← 2차에서 여기에 추가
 }
 
-# 기본 이미지 생성기. 마브는 키 없이도 동작(서버 인증 비활성).
-# 서버가 닫혀 있으면 SUBSONG_IMAGE_PROVIDER=placeholder 로 오프라인 폴백.
-DEFAULT_IMAGE_PROVIDER = os.environ.get("SUBSONG_IMAGE_PROVIDER", "marv")
+# 기본 이미지 생성기. UI에서 구간별 생성 시 provider를 명시해 보낸다.
+DEFAULT_IMAGE_PROVIDER = os.environ.get("SUBSONG_IMAGE_PROVIDER", "chatgpt_proxy")
 
 
 def get_image_provider(name: str | None = None) -> ImageProvider:
     name = name or DEFAULT_IMAGE_PROVIDER
-    return IMAGE_PROVIDERS.get(name, PlaceholderImageProvider)()
+    if name not in IMAGE_PROVIDERS:
+        raise RuntimeError(f"알 수 없는 이미지 생성기입니다: {name}")
+    return IMAGE_PROVIDERS[name]()
 
 
 def get_video_provider(name: str = "none") -> VideoProvider:
