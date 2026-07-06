@@ -31,8 +31,9 @@ let anchor = null; // 일관성 참조 { image_id, image_url, has_face }
 let useRef = true;
 let outputEditIndex = 0;
 let audioLeadSec = 0; // 영상 앞 무음/타이틀 프리롤 길이. 실제 오디오는 이 시간만큼 뒤에서 시작한다.
-let mode = "lyrics"; // "lyrics"(가사 뮤직비디오) | "ambient"(가사 없는 분위기 영상)
+let mode = "lyrics"; // "lyrics"(가사) | "ambient"(분위기) | "story"(스토리)
 let ambientPurpose = "meditation"; // 분위기 모드 목적 프리셋 키
+let storyGenre = "yadam"; // 스토리 모드 장르 키
 
 const $ = (id) => document.getElementById(id);
 const audio = $("audio");
@@ -416,6 +417,7 @@ function updateActionState() {
   const ambient = isAmbient();
   $("alignBtn").disabled = isAligning || !hasSource || !hasLyrics;
   if ($("ambientBtn")) $("ambientBtn").disabled = !hasSource;
+  if ($("storyBtn")) $("storyBtn").disabled = !($("storyText") && $("storyText").value.trim());
   $("srtBtn").disabled = !hasScenes || !timingOk;
   const canRender = !isRendering && audioId && hasScenes && timingOk;
   if ($("manualEditBtn")) $("manualEditBtn").disabled = !hasScenes;
@@ -643,18 +645,35 @@ async function doAlign() {
   }
 }
 
-// ---- 분위기(ambient) 모드 — 가사 없이 목적만으로 배경 슬라이드쇼 ----
+// ---- 제작 모드: lyrics(가사) / ambient(분위기) / story(스토리) ----
+const MODES = ["lyrics", "ambient", "story"];
+const MODE_LABELS = {
+  lyrics: "🎤 가사 뮤직비디오",
+  ambient: "🌙 분위기 영상",
+  story: "📖 스토리 영상",
+};
 function isAmbient() {
   return mode === "ambient";
 }
+function isStory() {
+  return mode === "story";
+}
+// ambient·story는 가사 그룹핑 대신 sections를 미리 만들어 쓰는 공통 성격.
+function isPrebuiltMode() {
+  return isAmbient() || isStory();
+}
 
 function setMode(next, save = true) {
-  mode = next === "ambient" ? "ambient" : "lyrics";
-  const ambient = isAmbient();
-  document.querySelectorAll(".mode-lyrics-only").forEach((el) => el.classList.toggle("hidden", ambient));
-  document.querySelectorAll(".mode-ambient-only").forEach((el) => el.classList.toggle("hidden", !ambient));
+  mode = MODES.includes(next) ? next : "lyrics";
+  MODES.forEach((m) => {
+    document.querySelectorAll(`.mode-${m}-only`).forEach((el) => el.classList.toggle("hidden", mode !== m));
+  });
+  // 음원 업로드는 lyrics/ambient 전용(story는 나레이션을 자동 생성).
+  const af = $("audioFile");
+  const afField = af && af.closest(".field");
+  if (afField) afField.classList.toggle("hidden", isStory());
   const banner = $("modeBannerName");
-  if (banner) banner.textContent = ambient ? "🌙 분위기 영상" : "🎤 가사 뮤직비디오";
+  if (banner) banner.textContent = MODE_LABELS[mode];
   updateActionState();
   renderChapters(); // 스탭3 버튼(가사별 나누기·프롬프트·비트) 노출을 모드에 맞게 갱신
   if (save) scheduleAutosave();
@@ -740,6 +759,106 @@ async function doAmbient() {
     btn.disabled = false;
     btn.textContent = "장면 만들기";
     updateActionState();
+  }
+}
+
+// ---- 스토리(이야기) 모드 — 대본 → 나레이션 + 장면 이미지 ----
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function updateStoryStats() {
+  const el = $("storyText");
+  if (el && $("storyStats")) $("storyStats").textContent = `${el.value.length}자`;
+}
+
+async function doStoryGenerate() {
+  const topic = $("storyTopic").value.trim();
+  if (!topic) return status("AI로 생성할 주제를 입력하세요.", "err");
+  const btn = $("storyGenBtn");
+  btn.disabled = true;
+  btn.textContent = "생성 중…";
+  busy("AI가 이야기를 쓰는 중입니다…");
+  try {
+    const res = await fetch("/api/story/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic, genre: storyGenre, length: Number($("storyLength").value) || 60 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    $("storyText").value = data.text || "";
+    updateStoryStats();
+    updateActionState();
+    status("이야기 대본을 생성했습니다. 확인·수정 후 ‘이야기 영상 만들기’를 누르세요.", "ok");
+  } catch (e) {
+    status("이야기 생성 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✨ AI 생성";
+  }
+}
+
+async function doStory() {
+  const text = $("storyText").value.trim();
+  if (!text) return status("이야기 대본을 입력하거나 AI로 생성하세요.", "err");
+  const btn = $("storyBtn");
+  btn.disabled = true;
+  btn.textContent = "만드는 중…";
+  busy("나레이션·장면을 만드는 중입니다. 1~2분 걸릴 수 있어요…");
+  try {
+    const res = await fetch("/api/story", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text, genre: storyGenre, voice: $("storyVoice").value || "warm_f",
+        custom_style: storyGenre === "custom" ? ($("imgStyle") ? $("imgStyle").value.trim() : "") : "",
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const result = await pollStoryJob(data.job_id);
+
+    audioId = result.audio_id;
+    scenes = normalizeScenes(result.scenes || []);
+    sectionsState = (result.sections || []).map((s) => ({
+      ...s, candidates: [], subtitle: s.subtitle !== false,
+    }));
+    audioLeadSec = 0;
+    audio.src = result.audio_url;
+    if (!$("songTitle").value.trim()) $("songTitle").value = defaultTitleText();
+    // 스토리: 나레이션 자막 ON(하이라이트 없는 심플)·크로스페이드·잔잔한 줌.
+    $("subtitleStyle").value = "simple";
+    $("karaokeToggle").checked = false;
+    $("transition").value = "crossfade";
+    if (Number($("kenBurns").value) === 0) $("kenBurns").value = 0.06;
+    updateFxLabels();
+    updateStylePreview();
+    stopAt = null;
+    renderRows();
+    renderSectionCards();
+    renderAnchor();
+    renderChapters();
+    resetHistory();
+    goStep(3);
+    status(`${scenes.length}개 장면을 만들었습니다. ‘전체 이미지 자동생성’으로 배경을 채우세요.`, "ok");
+  } catch (e) {
+    status("이야기 영상 만들기 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "이야기 영상 만들기";
+    updateActionState();
+  }
+}
+
+async function pollStoryJob(jid) {
+  for (;;) {
+    await _sleep(1000);
+    const res = await fetch(`/api/jobs/${jid}`);
+    if (!res.ok) throw new Error("작업 상태를 가져오지 못했습니다.");
+    const j = await res.json();
+    if (j.message) busy(`${j.message} (${Math.round((j.progress || 0) * 100)}%)`);
+    if (j.status === "done") return j.result || {};
+    if (j.status === "error") throw new Error(j.error || "생성 실패");
+    if (j.status === "cancelled") throw new Error("취소됨");
   }
 }
 
@@ -1680,6 +1799,23 @@ $("purposeChips").addEventListener("click", (e) => {
 
 $("sceneCount").addEventListener("input", () => {
   $("sceneCountVal").textContent = $("sceneCount").value;
+  scheduleAutosave();
+});
+
+// ---- 스토리 모드 위젯 ----
+$("storyBtn").addEventListener("click", doStory);
+$("storyGenBtn").addEventListener("click", doStoryGenerate);
+$("storyText").addEventListener("input", () => {
+  updateStoryStats();
+  updateActionState();
+  scheduleAutosave();
+});
+$("storyVoice").addEventListener("change", scheduleAutosave);
+$("genreChips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  storyGenre = chip.dataset.genre || "yadam";
+  $("genreChips").querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === chip));
   scheduleAutosave();
 });
 
@@ -2886,6 +3022,11 @@ function collectState() {
     ambient_purpose: ambientPurpose,
     ambient_mood: $("ambientMood") ? $("ambientMood").value : "",
     scene_count: Number($("sceneCount") ? $("sceneCount").value : 6) || 6,
+    story_genre: storyGenre,
+    story_voice: $("storyVoice") ? $("storyVoice").value : "warm_f",
+    story_text: $("storyText") ? $("storyText").value : "",
+    story_topic: $("storyTopic") ? $("storyTopic").value : "",
+    story_length: $("storyLength") ? $("storyLength").value : "60",
     language: $("language").value,
     lyrics: $("lyrics").value,
     step: currentStep,            // 새로고침 후 같은 단계로 복원하기 위해 현재 단계 저장
@@ -2950,6 +3091,16 @@ function applyState(st) {
     $("purposeChips").querySelectorAll(".chip").forEach((c) =>
       c.classList.toggle("active", c.dataset.purpose === ambientPurpose));
   }
+  storyGenre = st.story_genre || "yadam";
+  if ($("storyVoice")) $("storyVoice").value = st.story_voice || "warm_f";
+  if ($("storyText")) $("storyText").value = st.story_text || "";
+  if ($("storyTopic")) $("storyTopic").value = st.story_topic || "";
+  if ($("storyLength") && st.story_length) $("storyLength").value = st.story_length;
+  if ($("genreChips")) {
+    $("genreChips").querySelectorAll(".chip").forEach((c) =>
+      c.classList.toggle("active", c.dataset.genre === storyGenre));
+  }
+  updateStoryStats();
   setMode(st.mode || "lyrics", false);
   if ($("titleLeadSec")) $("titleLeadSec").value = st.title_lead_sec || audioLeadSec || 3;
   if ($("endingTailSec")) $("endingTailSec").value = st.ending_tail_sec || 3;
@@ -3098,16 +3249,16 @@ function buildChapters() {
 function renderChapters() {
   const box = $("ytExport");
   if (!box) return;
-  const ambient = isAmbient();
+  const prebuilt = isPrebuiltMode();
   const ga = $("genAllBtn");
   if (ga) ga.classList.toggle("hidden", !scenes.length);
-  // 분위기 모드: 가사별 나누기·프롬프트 자동작성·비트 스냅은 가사 전용이라 숨긴다.
+  // 분위기·스토리 모드: 가사별 나누기·프롬프트 자동작성·비트 스냅은 가사 전용이라 숨긴다.
   const gi = $("genImagesBtn");
-  if (gi) gi.classList.toggle("hidden", ambient);
+  if (gi) gi.classList.toggle("hidden", prebuilt);
   const ap = $("autoPromptBtn");
-  if (ap) ap.classList.toggle("hidden", ambient || !sectionsState.length);
+  if (ap) ap.classList.toggle("hidden", prebuilt || !sectionsState.length);
   const bs = $("beatSnapBtn");
-  if (bs) bs.classList.toggle("hidden", ambient || sectionsState.length < 2);
+  if (bs) bs.classList.toggle("hidden", prebuilt || sectionsState.length < 2);
   if (sectionsState.length) {
     box.classList.remove("hidden");
     $("chaptersBox").value = buildChapters();
@@ -3713,7 +3864,9 @@ $("prevStep").addEventListener("click", () => goStep(currentStep - 1));
 $("nextStep").addEventListener("click", () => {
   if (currentStep === 1 && !scenes.length) {
     return status(
-      isAmbient() ? "먼저 ‘장면 만들기’를 눌러 장면을 만들어 주세요." : "먼저 ‘자동 정렬 시작’으로 가사를 맞춰주세요.",
+      isStory() ? "먼저 ‘이야기 영상 만들기’를 눌러 장면을 만들어 주세요."
+        : isAmbient() ? "먼저 ‘장면 만들기’를 눌러 장면을 만들어 주세요."
+          : "먼저 ‘자동 정렬 시작’으로 가사를 맞춰주세요.",
       "err"
     );
   }

@@ -29,6 +29,7 @@ from . import align as align_mod
 from . import ambient as ambient_mod
 from . import beats as beats_mod
 from . import images as images_mod
+from . import story as story_mod
 from . import jobs as jobs_mod
 from . import prompts as prompts_mod
 from . import render as render_mod
@@ -294,6 +295,68 @@ def api_ambient(
         "scenes": scenes,
         "sections": sections,
     }
+
+
+class StoryGenReq(BaseModel):
+    topic: str
+    genre: str = "yadam"
+    length: int = 60
+
+
+class StoryReq(BaseModel):
+    text: str
+    genre: str = "yadam"
+    voice: str = "warm_f"
+    custom_style: str = ""
+
+
+@app.get("/api/story/options")
+def api_story_options():
+    """스토리 모드 장르·목소리 목록(프론트 칩/드롭다운용)."""
+    return {
+        "genres": [{"key": k, "label": v["label"], "emoji": v["emoji"]}
+                   for k, v in story_mod.GENRES.items()],
+        "voices": [{"key": k, "label": v["label"]} for k, v in story_mod.VOICES.items()],
+    }
+
+
+@app.post("/api/story/generate")
+def api_story_generate(req: StoryGenReq):
+    """주제 → A.X-4.0로 이야기 대본 자동 생성(본문 텍스트)."""
+    try:
+        text = story_mod.generate_script(req.topic, req.genre, req.length)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"이야기 생성 실패: {e}")
+    return {"text": text}
+
+
+@app.post("/api/story")
+def api_story(req: StoryReq):
+    """대본 → 나레이션 TTS + 장면 이미지 프롬프트 → scenes/sections (백그라운드 작업)."""
+    if not (req.text or "").strip():
+        raise HTTPException(400, "이야기 내용을 입력하세요.")
+    job = jobs_mod.create("story")
+
+    def run():
+        try:
+            audio_id, scenes, sections = story_mod.build(
+                req.text, req.genre, req.voice, DATA,
+                custom_style=req.custom_style, job=job,
+            )
+            if job.cancelled:
+                job.status, job.message = "cancelled", "취소됨"
+                return
+            job.result = {
+                "audio_id": audio_id, "audio_url": _data_url(audio_id),
+                "scenes": scenes, "sections": sections,
+            }
+            job.status, job.progress = "done", 1.0
+        except Exception as e:  # noqa: BLE001
+            logger.exception("story job %s failed", job.id)
+            job.status, job.error = "error", str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job.id}
 
 
 @app.post("/api/upload-bg")

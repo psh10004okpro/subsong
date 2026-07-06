@@ -8,7 +8,7 @@
   <link rel="shortcut icon" href="favicon.ico?v=20260630b" />
   <link rel="icon" type="image/png" href="favicon.png?v=20260630b" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260630b" />
-  <link rel="stylesheet" href="style.css?v=20260706c" />
+  <link rel="stylesheet" href="style.css?v=20260706d" />
 </head>
 <body class="theme-light">
   <header class="app-header">
@@ -128,6 +128,7 @@
             <h2>소스 준비</h2>
             <p class="mode-lyrics-only">음원 파일과 줄 단위 가사를 넣으면 AI가 자동으로 가사를 분석하고 싱크를 맞춥니다.</p>
             <p class="mode-ambient-only hidden">음원과 목적만 넣으면 가사 없이 분위기 배경 영상을 만듭니다. 명상·공부·수면 등에 적합합니다.</p>
+            <p class="mode-story-only hidden">이야기 대본을 넣거나 AI로 생성하면, 문장별 나레이션 음성·자막·장면 이미지를 자동으로 만듭니다.</p>
           </div>
           <div class="field">
             <label for="audioFile">음원 파일</label>
@@ -149,6 +150,16 @@
             <button type="button" id="alignBtn" class="primary">자동 정렬 시작</button>
           </div>
           <button type="button" id="ambientBtn" class="primary mode-ambient-only hidden">장면 만들기</button>
+          <label class="select-field mode-story-only hidden" for="storyVoice">
+            <span>나레이션 목소리</span>
+            <select id="storyVoice">
+              <option value="warm_f" selected>따뜻한 여성</option>
+              <option value="natural_f">자연스러운 여성</option>
+              <option value="calm_f">차분한 여성</option>
+              <option value="korean">표준 한국어</option>
+            </select>
+          </label>
+          <button type="button" id="storyBtn" class="primary mode-story-only hidden">이야기 영상 만들기</button>
           <aside class="notice mode-lyrics-only">
             <strong>첫 정렬은 오래 걸릴 수 있습니다.</strong>
             <span>모델을 처음 내려받는 동안 시간이 필요합니다. 이후 같은 모델은 더 빠릅니다.</span>
@@ -156,6 +167,10 @@
           <aside class="notice mode-ambient-only hidden">
             <strong>가사 없이 분위기 영상을 만듭니다.</strong>
             <span>음원 길이를 장면 수만큼 나눠 목적에 맞는 배경 이미지를 생성합니다. 다음 ‘배경’ 단계에서 이미지를 자동 생성하세요.</span>
+          </aside>
+          <aside class="notice mode-story-only hidden">
+            <strong>이야기로 나레이션 영상을 만듭니다.</strong>
+            <span>문장마다 나레이션 음성을 만들고 자막·장면 이미지를 붙입니다. 나레이션 생성에 1~2분 걸릴 수 있습니다.</span>
           </aside>
         </div>
 
@@ -191,6 +206,50 @@
             </div>
             <input type="range" id="sceneCount" min="1" max="20" step="1" value="6" />
             <span class="muted">음원 길이를 이 개수만큼 나눠 배경이 천천히 바뀝니다.</span>
+          </div>
+        </div>
+
+        <!-- 스토리 모드: 장르 · AI 생성 · 대본 -->
+        <div class="source-card source-story mode-story-only hidden">
+          <div class="source-card-head">
+            <div>
+              <span>이야기 만들기</span>
+              <small>Story</small>
+            </div>
+          </div>
+          <div class="field">
+            <label>장르</label>
+            <div id="genreChips" class="purpose-chips">
+              <button type="button" class="chip active" data-genre="yadam">🏺 야담</button>
+              <button type="button" class="chip" data-genre="history">📜 역사</button>
+              <button type="button" class="chip" data-genre="mystery">🔍 미스터리</button>
+              <button type="button" class="chip" data-genre="horror">👻 공포</button>
+              <button type="button" class="chip" data-genre="legend">🐉 전설</button>
+              <button type="button" class="chip" data-genre="fairytale">📖 동화</button>
+              <button type="button" class="chip" data-genre="scifi">🚀 SF</button>
+              <button type="button" class="chip" data-genre="knowledge">💡 지식</button>
+              <button type="button" class="chip" data-genre="custom">✎ 직접</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="storyTopic">주제로 AI 생성 <small>(선택)</small></label>
+            <div class="story-ai-row">
+              <input type="text" id="storyTopic" placeholder="예: 조선시대 어느 관리의 기이한 하룻밤" />
+              <select id="storyLength" aria-label="이야기 길이">
+                <option value="45">짧게 ~45초</option>
+                <option value="60" selected>보통 ~1분</option>
+                <option value="90">길게 ~1분 반</option>
+              </select>
+              <button type="button" id="storyGenBtn" class="mini-btn">✨ AI 생성</button>
+            </div>
+          </div>
+          <div class="field story-text-field">
+            <label for="storyText">이야기 대본</label>
+            <textarea id="storyText" rows="10" placeholder="이야기를 직접 쓰거나 위에서 AI로 생성하세요. 문장 단위로 자막·장면이 나뉩니다."></textarea>
+            <div class="field-footer">
+              <span id="storyStats">0자</span>
+              <span>문장마다 나레이션·이미지가 만들어집니다.</span>
+            </div>
           </div>
         </div>
 
@@ -638,6 +697,12 @@
           <span class="mode-card-desc">명상·공부·수면 등 목적만 정하면, 목적에 맞는 배경이 흐르는 롱폼 영상을 만듭니다.</span>
           <span class="mode-card-cta">이걸로 만들기 →</span>
         </button>
+        <button type="button" class="mode-card" data-mode="story">
+          <span class="mode-card-icon" aria-hidden="true">📖</span>
+          <b>스토리 영상 <small>(이야기·나레이션)</small></b>
+          <span class="mode-card-desc">야담·역사·미스터리·공포 등 이야기를 넣거나 AI로 생성하면, 나레이션·자막·장면 이미지를 자동으로 만듭니다.</span>
+          <span class="mode-card-cta">이걸로 만들기 →</span>
+        </button>
       </div>
       <div class="mode-landing-foot hidden" id="modeLandingContinue">
         <button type="button" id="continueWorkBtn" class="link-btn">↩ 이전 작업 이어서 하기</button>
@@ -673,6 +738,6 @@
 
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
   <div id="guideTip" class="guide-tip hidden" role="tooltip"></div>
-  <script src="app.js?v=20260706c"></script>
+  <script src="app.js?v=20260706d"></script>
 </body>
 </html>

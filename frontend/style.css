@@ -632,6 +632,31 @@ body.guide-mode a[data-guide]::after {
 #ambientToBgBtn {
   margin-top: 12px;
 }
+.source-story {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.story-ai-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.story-ai-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+.story-ai-row select {
+  flex: 0 0 auto;
+}
+.story-ai-row .mini-btn {
+  white-space: nowrap;
+}
+.story-text-field textarea {
+  min-height: clamp(200px, calc(100vh - 470px), 340px);
+  font-size: 15px;
+  line-height: 1.7;
+}
 
 .lyrics-field {
   min-height: 0;
