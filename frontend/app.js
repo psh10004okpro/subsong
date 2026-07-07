@@ -1019,6 +1019,8 @@ async function doAvatar() {
     fd.append("voice", $("avatarVoice").value || "");
     fd.append("tone", avatarTone);
     fd.append("model", ($("avatarModel") && $("avatarModel").value) || "");
+    fd.append("longform", $("avatarLongform") && $("avatarLongform").checked ? "true" : "false");
+    fd.append("aspect", "9:16");
     if (avatarUploadFile) fd.append("portrait", avatarUploadFile);
     else fd.append("image_id", avatarImageId);
     const res = await fetch("/api/avatar", { method: "POST", body: fd });
@@ -3249,6 +3251,7 @@ function collectState() {
     avatar_topic: $("avatarTopic") ? $("avatarTopic").value : "",
     avatar_voice: $("avatarVoice") ? $("avatarVoice").value : "",
     avatar_model: $("avatarModel") ? $("avatarModel").value : "",
+    avatar_longform: $("avatarLongform") ? $("avatarLongform").checked : false,
     language: $("language").value,
     lyrics: $("lyrics").value,
     step: currentStep,            // 새로고침 후 같은 단계로 복원하기 위해 현재 단계 저장
@@ -3330,6 +3333,7 @@ function applyState(st) {
   if ($("avatarScript")) $("avatarScript").value = st.avatar_script || "";
   if ($("avatarTopic")) $("avatarTopic").value = st.avatar_topic || "";
   if ($("avatarModel") && st.avatar_model) $("avatarModel").value = st.avatar_model;
+  if ($("avatarLongform")) $("avatarLongform").checked = !!st.avatar_longform;
   if ($("toneChips")) {
     $("toneChips").querySelectorAll(".chip").forEach((c) =>
       c.classList.toggle("active", c.dataset.tone === avatarTone));

@@ -30,6 +30,7 @@ from . import ambient as ambient_mod
 from . import avatar as avatar_mod
 from . import beats as beats_mod
 from . import images as images_mod
+from . import longform as longform_mod
 from . import story as story_mod
 from . import jobs as jobs_mod
 from . import prompts as prompts_mod
@@ -430,8 +431,13 @@ def api_avatar(
     voice: str = Form(""),
     tone: str = Form("trust"),
     model: str = Form(""),
+    longform: bool = Form(False),
+    aspect: str = Form("9:16"),
 ):
-    """아바타 이미지 + 대본 + 보이스 → 말하는 영상(마브 talking_head, 백그라운드 잡)."""
+    """아바타 이미지 + 대본 + 보이스 → 말하는 영상(마브 talking_head, 백그라운드 잡).
+
+    longform=True면 talking_head 1개를 만든 뒤 가상 카메라·B-roll로 긴 영상으로 합성.
+    """
     if portrait is not None and portrait.filename:
         pid = _save_upload(portrait, ".png")
         portrait_path = os.path.join(DATA, pid)
@@ -448,11 +454,21 @@ def api_avatar(
 
     def run():
         try:
-            vid = avatar_mod.build(portrait_path, script, voice or None, tone, DATA,
-                                   model=model or None, job=job)
+            presenter = avatar_mod.build(portrait_path, script, voice or None, tone, DATA,
+                                         model=model or None, job=job)
             if job.cancelled:
                 job.status, job.message = "cancelled", "취소됨"
                 return
+            vid = presenter
+            if longform:
+                # 롱폼: presenter 1클립 → 가상 카메라 + B-roll 합성.
+                vid = longform_mod.build(
+                    os.path.join(DATA, presenter), script, DATA,
+                    aspect=aspect, subtitles=True, job=job,
+                )
+                if job.cancelled:
+                    job.status, job.message = "cancelled", "취소됨"
+                    return
             job.result = {"video_id": vid, "video_url": _data_url(vid)}
             job.status, job.progress = "done", 1.0
         except Exception as e:  # noqa: BLE001

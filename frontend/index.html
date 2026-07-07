@@ -8,7 +8,7 @@
   <link rel="shortcut icon" href="favicon.ico?v=20260630b" />
   <link rel="icon" type="image/png" href="favicon.png?v=20260630b" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png?v=20260630b" />
-  <link rel="stylesheet" href="style.css?v=20260706f" />
+  <link rel="stylesheet" href="style.css?v=20260707a" />
 </head>
 <body class="theme-light">
   <header class="app-header">
@@ -168,6 +168,10 @@
           <label class="select-field mode-avatar-only hidden" for="avatarModel">
             <span>아바타 모델 <small>(선택)</small></span>
             <select id="avatarModel"><option value="">기본</option></select>
+          </label>
+          <label class="also-shorts mode-avatar-only hidden">
+            <input type="checkbox" id="avatarLongform" />
+            <span>긴 영상 <small>(가상 카메라·B-roll 장면 전환으로 지루함 감소)</small></span>
           </label>
           <button type="button" id="avatarBtn" class="primary mode-avatar-only hidden">아바타 영상 만들기</button>
           <button type="button" id="jobCancelBtn" class="ghost hidden">생성 취소</button>
@@ -819,6 +823,6 @@
 
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
   <div id="guideTip" class="guide-tip hidden" role="tooltip"></div>
-  <script src="app.js?v=20260706f"></script>
+  <script src="app.js?v=20260707a"></script>
 </body>
 </html>
