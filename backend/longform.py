@@ -20,17 +20,31 @@ ASPECTS = render_mod.ASPECTS
 FONT = os.environ.get("SUBSONG_FONT", "NanumGothic")
 
 # 가상 카메라 프레이밍(정적 크롭) — presenter 구간마다 순환해 '컷 전환' 느낌을 준다.
-# (zoom, y_center) — y_center 0=위(얼굴)/0.5=중앙. None=풀샷.
-CAM = [None, (1.2, 0.5), (1.45, 0.28), (1.25, 0.4)]
+# 캔버스=presenter 네이티브 해상도라, 여기선 '살짝 확대'만(머리 잘림 방지, 위쪽 유지).
+# (zoom, y_center) — y_center 0=위(얼굴)/0.5=중앙. None=원본 그대로(풀샷).
+CAM = [None, (1.12, 0.15), (1.22, 0.1), (1.08, 0.2)]
 
 
 def _cam_filter(idx, w, h):
-    base = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
     c = CAM[idx % len(CAM)]
     if not c:
-        return base
+        return f"scale={w}:{h},setsar=1"
     z, yc = c
-    return (f"{base},crop=iw/{z}:ih/{z}:(iw-iw/{z})/2:(ih-ih/{z})*{yc},scale={w}:{h}")
+    return (f"crop=iw/{z}:ih/{z}:(iw-iw/{z})/2:(ih-ih/{z})*{yc},scale={w}:{h},setsar=1")
+
+
+def _probe_wh(path):
+    import subprocess
+    o = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path],
+        capture_output=True, text=True,
+    )
+    try:
+        w, h = o.stdout.strip().split("x")
+        return int(w), int(h)
+    except (ValueError, AttributeError):
+        return 0, 0
 
 
 def _roles(n):
@@ -58,7 +72,14 @@ def _timings(segs, total):
 def build(presenter_path, script, out_dir, aspect="9:16",
           subtitles=True, tone_style="", provider=None, job=None):
     """presenter mp4 + 대본 → 롱폼 합성 mp4 id."""
-    w, h = ASPECTS.get(aspect, (1080, 1920))
+    # presenter 네이티브 해상도를 캔버스로 사용(talking_head는 16:9 가로로 나오는 경우가 많음).
+    pw, ph = _probe_wh(presenter_path)
+    if pw and ph:
+        w, h = pw, ph
+        broll_aspect = "16:9" if pw > ph * 1.2 else ("9:16" if ph > pw * 1.2 else "1:1")
+    else:
+        w, h = ASPECTS.get(aspect, (1080, 1920))
+        broll_aspect = aspect
     duration = render_mod.probe_duration(presenter_path)
     if duration <= 0:
         raise RuntimeError("presenter 영상 길이를 읽지 못했습니다.")
@@ -80,7 +101,7 @@ def build(presenter_path, script, out_dir, aspect="9:16",
                 raise RuntimeError("취소됨")
             try:
                 res = images_mod.generate_candidates(prompts[k], out_dir, count=1,
-                                                     aspect=aspect, provider=provider)
+                                                     aspect=broll_aspect, provider=provider)
                 imgs[i] = os.path.join(out_dir, res[0]["image_id"])
             except Exception:
                 roles[i] = "P"  # 이미지 실패 → presenter 컷으로

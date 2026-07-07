@@ -121,13 +121,17 @@ def generate_avatar_image(description, tone, out_dir, job=None):
     """설명 → 마브 이미지 생성 → subsong DATA에 저장 → image_id."""
     t = _tone(tone)
     desc = (description or "").strip()
-    prompt = f"{t['avatar_prompt']}, {desc}" if desc else t["avatar_prompt"]
+    # talking_head는 16:9 가로로 출력되므로, 아바타 이미지도 16:9 + 머리 위 여백(헤드룸)으로
+    # 상반신 구도를 잡아야 영상에서 머리가 잘리지 않는다.
+    framing = "상반신 중심 구도, 머리 위 여백 충분히, 인물 중앙 배치, 가로 화면"
+    base = f"{t['avatar_prompt']}, {desc}" if desc else t["avatar_prompt"]
+    prompt = f"{base}, {framing}"
     if job is not None:
         job.message = "아바타 이미지 생성 중"; job.progress = 0.1
     r = requests.post(
         f"{BASE}/v1/image", headers=_headers(),
         data={"model": AVATAR_IMAGE_MODEL, "prompt_ko": prompt,
-              "params_json": json.dumps({"aspect": "9:16", "no_text": True})},
+              "params_json": json.dumps({"aspect": "16:9", "no_text": True})},
         timeout=60,
     )
     r.raise_for_status()

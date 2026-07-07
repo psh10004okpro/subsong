@@ -39,6 +39,15 @@ mkdir -p "$SUBSONG_MODEL_DIR"
 # 한글 자막 폰트 (apt fonts-nanum). 코드 기본값(Malgun Gothic)은 Windows용.
 export SUBSONG_FONT="${SUBSONG_FONT:-NanumGothic}"
 
+# 한글 자막 폰트 보장 — 박스 리셋으로 시스템 폰트가 날아가도 subsong은 DATA/fonts를
+# libass fontsdir로 직접 읽는다. 기본 폰트(NanumGothic)가 없으면 받아 둔다.
+_FDIR="$SUBSONG_DATA_DIR/fonts"; mkdir -p "$_FDIR"
+if [ ! -s "$_FDIR/NanumGothic.ttf" ]; then
+  curl -sL --max-time 40 -o "$_FDIR/NanumGothic.ttf" \
+    "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf" \
+    && echo "[i] NanumGothic 폰트 확보" || echo "[!] NanumGothic 다운로드 실패(한글 자막 깨질 수 있음)"
+fi
+
 # 정렬 모델 — large-v3(정확·느림) / medium / small(빠름).
 export SUBSONG_MODEL="${SUBSONG_MODEL:-large-v3}"
 
